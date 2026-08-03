@@ -149,31 +149,42 @@ players_df['expected_goals_conceded'] = pd.to_numeric(players_df.get('expected_g
 players_df['minutes'] = pd.to_numeric(players_df['minutes'], errors='coerce').fillna(0)
 players_df['games_played'] = (players_df['minutes'] / 90.0).clip(lower=1.0)
 players_df['avg_minutes'] = players_df['minutes'] / players_df['games_played']
-
-# --- OFFICIAL API EXPECTED POINTS + FDR FIXTURE DYNAMICS ---
 players_df['ep_next'] = pd.to_numeric(players_df['ep_next'], errors='coerce').fillna(0.0)
 
-# Build dynamic team fixture dictionary (GW1–GW10)
+# Build dynamic team fixture dictionary (GW1–GW38 supported)
 team_fixtures = {}
 for f in fixtures_data:
     gw = f.get('event')
-    if gw and 1 <= gw <= 10:
+    if gw:
         team_fixtures.setdefault(f['team_h'], {})[gw] = f['team_h_difficulty']
         team_fixtures.setdefault(f['team_a'], {})[gw] = f['team_a_difficulty']
 
-# Project expected points for GW1–GW10 scaling ep_next via FDR
+# --- ENHANCED UNIQUE XP MODEL (Solves Teammate Duplication) ---
 for gw in range(1, 11):
     def calculate_gw_xp(row):
-        base_ep = row['ep_next']
+        # 1. Minute reliability factor (Scale from 0.0 to 1.0)
+        mins_factor = min(row['avg_minutes'] / 90.0, 1.0)
+        
+        # 2. Individual Attacking Threat per 90 mins (xGI per game weighted)
+        xgi_per_90 = row['expected_goal_involvements'] / row['games_played']
+        
+        # Position multipliers for attacking threat
+        pos_weight = {'GKP': 0.1, 'DEF': 0.8, 'MID': 1.0, 'FWD': 1.2}.get(row['position'], 1.0)
+        individual_attacking_bonus = xgi_per_90 * pos_weight
+        
+        # 3. Base composite formula mixing API projection with individual metrics
+        base = (row['ep_next'] * 0.6) + (individual_attacking_bonus * 1.5)
+        
+        # If player barely plays, scale down heavily
+        if mins_factor < 0.2:
+            base *= 0.2
+
+        # 4. Apply Team FDR Modifier
         team_id = row['team']
-        
-        # Get fixture difficulty rating for this team in the specified GW (Default 3 if blank)
         fdr = team_fixtures.get(team_id, {}).get(gw, 3)
-        
-        # FDR modifier: FDR 1 -> +20%, FDR 3 -> Baseline, FDR 5 -> -20%
         fixture_modifier = 1.0 + ((3 - fdr) * 0.10)
         
-        return round(base_ep * fixture_modifier, 2)
+        return round(base * fixture_modifier, 2)
 
     players_df[f'GW{gw}_xP'] = players_df.apply(calculate_gw_xp, axis=1)
 
@@ -226,7 +237,7 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     
     fig.add_shape(type="rect", x0=4, y0=24, x1=96, y1=136, line=dict(color="#2e6345", width=2))
     
-    # Halfway line (Fixed y1=80)
+    # Halfway line
     fig.add_shape(type="line", x0=4, y0=80, x1=96, y1=80, line=dict(color="#2e6345", width=2))
     
     fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
@@ -356,7 +367,7 @@ if menu == "📊 Dashboard Overview":
 
     fig = px.bar(
         top_15, x='web_name', y='xP', color='position', text='xP', template='plotly_dark',
-        hover_data=['team_name', 'now_cost', 'selected_by_percent', 'form'],
+        hover_data=['team_name', 'now_cost', 'selected_by_percent'],
         color_discrete_map={'GKP': '#FFD700', 'DEF': '#00BFFF', 'MID': '#00FF7F', 'FWD': '#FF4500'}
     )
     fig.update_traces(texttemplate='%{text}', textposition='outside')
@@ -649,7 +660,7 @@ elif menu == "🔄 Transfer Planner":
             st.success(f"✅ Transfer Applied! Sold {p_out['web_name']}, bought {p_in['web_name']}.")
             st.rerun()
 
-# --- PLAYER EXPLORER PAGE WITH SEARCH BAR & GW1-GW10 EXPECTED POINTS COLUMNS ---
+# --- PLAYER EXPLORER PAGE ---
 elif menu == "🔍 Player Explorer & Differentials":
     st.title("🔍 Player Explorer & Differential Finder")
     st.caption("Search for any player in Premier League, filter position/ownership, and inspect expected points columns from GW1 to GW10.")
@@ -702,7 +713,6 @@ elif menu == "🔍 Player Explorer & Differentials":
         'avg_minutes': 'Avg Mins'
     }
     
-    # Add rename mapping for each GW column
     for i in range(1, 11):
         if f'GW{i}_xP' not in rename_dict:
             rename_dict[f'GW{i}_xP'] = f'GW{i} xP'
