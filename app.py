@@ -192,131 +192,126 @@ st.sidebar.markdown("---")
 manager_id_input = st.sidebar.text_input("Enter FPL Manager ID", value="475093")
 use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", value=True)
 
-# --- OVERHAULED & PROPORTIONED PITCH GENERATOR FUNCTION ---
+# --- RE-ENGINEERED FPL PITCH VISUALIZER ---
 def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig = go.Figure()
 
-    # --- PITCH GEOMETRY & LINES (100x100 grid) ---
-    # Grass Background
-    fig.add_shape(type="rect", x0=0, y0=18, x1=100, y1=100, 
-                  fillcolor="#12251a", line=dict(color="#2e593f", width=2))
+    # --- 1. PITCH GEOMETRY & BACKGROUND (Standard Vertical Orientation: X 0..100, Y 0..140) ---
+    # Grass Background with modern dark emerald tone
+    fig.add_shape(type="rect", x0=0, y0=20, x1=100, y1=140, 
+                  fillcolor="#0a1a12", line=dict(color="#1f422e", width=2))
     
     # Outer Boundary Line
-    fig.add_shape(type="rect", x0=4, y0=22, x1=96, y1=96, line=dict(color="#458a60", width=2))
-    # Halfway Line
-    fig.add_shape(type="line", x0=4, y0=59, x1=96, y1=59, line=dict(color="#458a60", width=2))
-    # Center Circle & Spot
-    fig.add_shape(type="circle", x0=38, y0=49, x1=62, y1=69, line=dict(color="#458a60", width=2))
-    fig.add_shape(type="circle", x0=49.2, y0=58.2, x1=50.8, y1=59.8, fillcolor="#458a60", line=dict(color="#458a60"))
+    fig.add_shape(type="rect", x0=5, y0=25, x1=95, y1=135, line=dict(color="#2e6345", width=2))
     
-    # Bottom Box (Penalty Box + Goal Area)
-    fig.add_shape(type="rect", x0=22, y0=22, x1=78, y1=38, line=dict(color="#458a60", width=2))
-    fig.add_shape(type="rect", x0=36, y0=22, x1=64, y1=28, line=dict(color="#458a60", width=2))
+    # Halfway Line & Center Circle
+    fig.add_shape(type="line", x0=5, y0=80, x1=95, y1=80, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="circle", x0=49, y0=79, x1=51, y1=81, fillcolor="#2e6345", line=dict(color="#2e6345"))
     
-    # Top Box (Penalty Box + Goal Area)
-    fig.add_shape(type="rect", x0=22, y0=80, x1=78, y1=96, line=dict(color="#458a60", width=2))
-    fig.add_shape(type="rect", x0=36, y0=90, x1=64, y1=96, line=dict(color="#458a60", width=2))
+    # Bottom Box (Goalkeeper Area & Penalty Box)
+    fig.add_shape(type="rect", x0=22, y0=25, x1=78, y1=45, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="rect", x0=36, y0=25, x1=64, y1=32, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="circle", x0=49, y0=35, x1=51, y1=37, fillcolor="#2e6345", line=dict(color="#2e6345"))
+    
+    # Top Box (Opponent Goal Area)
+    fig.add_shape(type="rect", x0=22, y0=115, x1=78, y1=135, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="rect", x0=36, y0=128, x1=64, y1=135, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="circle", x0=49, y0=123, x1=51, y1=125, fillcolor="#2e6345", line=dict(color="#2e6345"))
 
-    # Bench Zone (Separate Dark Area at Bottom)
-    fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=16, 
-                  fillcolor="#0b1610", line=dict(color="#1f3829", width=2))
-    fig.add_annotation(x=5, y=13.5, text="<b>SUBSTITUTES BENCH</b>", showarrow=False, 
-                       font=dict(color="#8fa396", size=11, family="Arial"), xanchor="left")
+    # Bench Zone (Sleek Dark Container)
+    fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=17, 
+                  fillcolor="#060c08", line=dict(color="#1f422e", width=1.5))
+    fig.add_annotation(x=5, y=14.5, text="<b>SUBSTITUTES BENCH</b>", showarrow=False, 
+                       font=dict(color="#5a826b", size=10, family="Arial"), xanchor="left")
 
-    pos_y_map = {'GKP': 27, 'DEF': 46, 'MID': 68, 'FWD': 87}
+    # --- 2. POSITION Y-COORDINATES ---
+    pos_y_map = {'GKP': 33, 'DEF': 58, 'MID': 88, 'FWD': 118}
 
-    # --- PLOT STARTING XI ---
+    # Helper function for high-visibility player card rendering
+    def add_player_node(x, y, player, is_bench=False):
+        is_captain = (player['id'] == captain_id) and not is_bench
+        
+        # Color palette
+        bg_card = "#1a1300" if is_captain else ("#12161f" if not is_bench else "#0f1411")
+        border_col = "#FFD700" if is_captain else ("#37003c" if not is_bench else "#2e593f")
+        text_accent = "#FFD700" if is_captain else "#00FF7F"
+        node_col = "#FFD700" if is_captain else "#37003c"
+        
+        c_badge = " <span style='color:#FFD700; font-weight:bold;'>(C)</span>" if is_captain else ""
+        
+        # A. Player Jersey Marker Dot
+        fig.add_trace(go.Scatter(
+            x=[x], y=[y],
+            mode="markers+text",
+            marker=dict(
+                size=22 if not is_bench else 16, 
+                color=node_col, 
+                line=dict(width=2, color=border_col)
+            ),
+            text=["<b>C</b>" if is_captain else ""],
+            textposition="middle center",
+            textfont=dict(color="#000000" if is_captain else "#FFFFFF", size=11, family="Arial"),
+            hoverinfo="text",
+            hovertext=f"{player['web_name']} - {player['xP']} pts",
+            showlegend=False
+        ))
+
+        # B. Clean, Boxed Player Data Card
+        card_html = (
+            f"<b style='font-size:11px; color:#FFFFFF;'>{player['web_name']}</b>{c_badge}<br>"
+            f"<span style='color:{text_accent}; font-weight:bold;'>{player['xP']} pts</span>"
+            f"<span style='color:#9aa0a6;'> | £{player['now_cost']}m</span>"
+        ) if not is_bench else (
+            f"<b style='font-size:10px; color:#c1c7cd;'>{player['web_name']}</b><br>"
+            f"<span style='color:#00FF7F;'>{player['xP']} pts</span>"
+        )
+
+        offset_y = -5.8 if not is_bench else -4.2
+
+        fig.add_annotation(
+            x=x, y=y + offset_y,
+            text=card_html,
+            showarrow=False,
+            font=dict(family="Arial"),
+            align="center",
+            bgcolor=bg_card,
+            bordercolor=border_col,
+            borderwidth=1.5,
+            borderpad=4
+        )
+
+    # --- 3. PLOT STARTING XI ---
     for pos, y_val in pos_y_map.items():
         pos_players = starting_11_df[starting_11_df['position'] == pos]
         count = len(pos_players)
         
         if count > 0:
-            x_coords = [4 + (92 * (i + 1) / (count + 1)) for i in range(count)]
-            
+            x_coords = [5 + (90 * (i + 1) / (count + 1)) for i in range(count)]
             for idx, (_, player) in enumerate(pos_players.iterrows()):
-                x_val = x_coords[idx]
-                is_captain = (player['id'] == captain_id)
-                
-                badge_label = " (C)" if is_captain else ""
-                border_color = "#FFD700" if is_captain else "#00FF7F"
-                marker_color = "#5c4000" if is_captain else "#1E222D"
+                add_player_node(x_coords[idx], y_val, player, is_bench=False)
 
-                # 1. Plot Node Marker (Player Jersey Circle)
-                fig.add_trace(go.Scatter(
-                    x=[x_val], y=[y_val],
-                    mode="markers",
-                    marker=dict(size=24, color=marker_color, line=dict(width=3, color=border_color)),
-                    hoverinfo="text",
-                    hovertext=f"{player['web_name']} - {player['xP']} pts",
-                    showlegend=False
-                ))
-
-                # 2. Add Dedicated Player Card Annotation (Guarantees Text Renders Below Marker)
-                card_text = f"<b>{player['web_name']}{badge_label}</b><br><span style='color:#00FF7F;'>{player['xP']} pts</span> | £{player['now_cost']}m"
-                fig.add_annotation(
-                    x=x_val, y=y_val - 4.2,
-                    text=card_text,
-                    showarrow=False,
-                    font=dict(color="#FFFFFF", size=10, family="Arial"),
-                    align="center",
-                    bgcolor="rgba(14, 17, 23, 0.85)",
-                    bordercolor=border_color,
-                    borderwidth=1,
-                    borderpad=3
-                )
-
-    # --- PLOT BENCH PLAYERS ---
+    # --- 4. PLOT BENCH ---
     if not bench_df.empty:
         bench_count = len(bench_df)
-        bench_x_coords = [10 + (80 * (i + 1) / (bench_count + 1)) for i in range(bench_count)]
-        
+        bench_x_coords = [8 + (84 * (i + 1) / (bench_count + 1)) for i in range(bench_count)]
         for idx, (_, player) in enumerate(bench_df.iterrows()):
-            x_val = bench_x_coords[idx]
-            
-            # Bench Marker
-            fig.add_trace(go.Scatter(
-                x=[x_val], y=[6.5],
-                mode="markers",
-                marker=dict(size=18, color="#1b2a22", line=dict(width=2, color="#6b8e7b")),
-                hoverinfo="text",
-                hovertext=f"{player['web_name']} - {player['xP']} pts",
-                showlegend=False
-            ))
-            
-            # Bench Annotation Label
-            card_text = f"<b>{player['web_name']}</b><br><span style='color:#00FF7F;'>{player['xP']} pts</span>"
-            fig.add_annotation(
-                x=x_val, y=2.8,
-                text=card_text,
-                showarrow=False,
-                font=dict(color="#8fa396", size=9, family="Arial"),
-                align="center",
-                bgcolor="rgba(11, 22, 16, 0.85)",
-                bordercolor="#2e593f",
-                borderwidth=1,
-                borderpad=2
-            )
+            add_player_node(bench_x_coords[idx], 7.5, player, is_bench=True)
 
-    # --- PROPORTION & LAYOUT CONFIGURATION ---
+    # --- 5. CANVAS & AXES LAYOUT ---
     fig.update_layout(
-        xaxis=dict(
-            range=[-2, 102], 
-            showgrid=False, 
-            zeroline=False, 
-            showticklabels=False, 
-            fixedrange=True
-        ),
+        xaxis=dict(range=[-2, 102], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
         yaxis=dict(
-            range=[-2, 102], 
+            range=[-2, 142], 
             showgrid=False, 
             zeroline=False, 
             showticklabels=False, 
             fixedrange=True,
-            scaleanchor="x",  # LOCKS ASPECT RATIO PREVENTING DISTORTION
-            scaleratio=1
+            scaleanchor="x",
+            scaleratio=1.25  # Gives proper football pitch proportions
         ),
-        height=750,
-        margin=dict(l=10, r=10, t=10, b=10),
+        height=820,
+        margin=dict(l=5, r=5, t=5, b=5),
         plot_bgcolor="#0E1117",
         paper_bgcolor="#0E1117"
     )
