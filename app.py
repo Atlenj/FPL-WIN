@@ -226,7 +226,7 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     
     fig.add_shape(type="rect", x0=4, y0=24, x1=96, y1=136, line=dict(color="#2e6345", width=2))
     
-    fig.add_shape(type="line", x0=4, y0=80, x1=96, y1=80, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="line", x0=4, y0=80, x1=96, y0=80, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=49, y0=79, x1=51, y1=81, fillcolor="#2e6345", line=dict(color="#2e6345"))
     
@@ -388,7 +388,6 @@ if menu == "📊 Dashboard Overview":
 
     st.markdown("#### 📊 Official FPL Metrics Breakdown")
     
-    # --- UPDATED: Added 'xP ({selected_gw})' column to table ---
     fpl_stats_table = pd.DataFrame([{
         f"xP ({selected_gw})": p_data[selected_gw_col],
         "Official ep_next": p_data.get('ep_next', 0),
@@ -415,14 +414,14 @@ if menu == "📊 Dashboard Overview":
     
     st.dataframe(fpl_stats_table, use_container_width=True, hide_index=True)
 
-    # --- ADDED: Selected Player GW1 - GW10 xP Timeline ---
+    # Selected Player GW1 - GW10 xP Timeline
     st.markdown(f"#### 🗓️ Projected Expected Points (GW1 – GW10) for {p_data['web_name']}")
     gw_cols = [f'GW{i}_xP' for i in range(1, 11)]
     player_gw_table = pd.DataFrame([p_data[gw_cols].to_dict()])
     player_gw_table.columns = [f"GW{i}" for i in range(1, 11)]
     st.dataframe(player_gw_table, use_container_width=True, hide_index=True)
 
-    # --- ADDED: Top 15 Overall Matrix (GW1 – GW10) ---
+    # Top 15 Overall Matrix (GW1 – GW10)
     st.markdown("---")
     st.subheader("📅 Top 15 Players — Expected Points Matrix (GW1 – GW10)")
     matrix_cols = ['web_name', 'position', 'team_short', 'now_cost'] + gw_cols
@@ -465,7 +464,6 @@ elif menu == "🛡️ My Squad & Pitch View":
 
         all_selected_ids = selected_gkps + selected_defs + selected_mids + selected_fwds
         
-        # Override with custom transfers if present
         if st.session_state.custom_squad_ids:
             all_selected_ids = st.session_state.custom_squad_ids
             
@@ -534,7 +532,6 @@ elif menu == "🔄 Transfer Planner":
     st.title("🔄 FPL Transfer & Financial Planner")
     st.caption("Plan transfers, evaluate point projections, monitor remaining budget, and compare fixture schedules.")
 
-    # 1. Determine active current squad IDs
     current_squad_ids = []
     if st.session_state.custom_squad_ids:
         current_squad_ids = st.session_state.custom_squad_ids
@@ -555,23 +552,16 @@ elif menu == "🔄 Transfer Planner":
 
     active_squad_df = players_df[players_df['id'].isin(current_squad_ids)].copy()
     
-    # 2. Financial & Planner Summary Bar
     total_squad_val = round(active_squad_df['now_cost'].sum(), 1)
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Current Squad Value", f"£{total_squad_val:.1f}m")
-    
-    # Allow manual override for In The Bank balance
     st.session_state.bank_balance = col2.number_input("In The Bank (£m)", min_value=0.0, max_value=25.0, value=float(st.session_state.bank_balance), step=0.1)
-    
     free_transfers = col3.number_input("Free Transfers Available", min_value=1, max_value=5, value=1, step=1)
-    
     total_budget = round(total_squad_val + st.session_state.bank_balance, 1)
     col4.metric("Total Budget Available", f"£{total_budget:.1f}m")
 
     st.markdown("---")
-
-    # 3. Interactive Transfer Evaluator
     st.subheader("🔁 Evaluate Potential Transfer")
     
     p_col1, p_col2 = st.columns(2)
@@ -587,7 +577,6 @@ elif menu == "🔄 Transfer Planner":
 
     with p_col2:
         st.markdown("#### 🔄 Player In (Target Replacement)")
-        # Filter potential targets by same position and budget constraints
         eligible_targets = players_df[
             (players_df['position'] == p_out['position']) & 
             (~players_df['id'].isin(current_squad_ids)) &
@@ -606,14 +595,12 @@ elif menu == "🔄 Transfer Planner":
             )
             p_in = eligible_targets[eligible_targets['id'] == player_in_id].iloc[0]
 
-    # Display comparison metrics if selection valid
     if p_out is not None and p_in is not None:
         cost_diff = round(p_in['now_cost'] - p_out['now_cost'], 1)
         xp_out_single = p_out[selected_gw_col]
         xp_in_single = p_in[selected_gw_col]
         xp_diff_single = round(xp_in_single - xp_out_single, 2)
         
-        # Calculate 5-GW Projected Impact
         target_gw_num = int(selected_gw.replace("GW", ""))
         horizon_gws = [f"GW{i}_xP" for i in range(target_gw_num, min(11, target_gw_num + 5))]
         
@@ -630,9 +617,7 @@ elif menu == "🔄 Transfer Planner":
         rem_bank = round(st.session_state.bank_balance - cost_diff, 1)
         m4.metric("Remaining Bank After Transfer", f"£{rem_bank:.1f}m")
 
-        # Fixture Difficulty Visual Comparison
         st.markdown("#### 🗓️ Upcoming Fixture Difficulty (FDR) Comparison")
-        
         fdr_colors = {1: "🟩 #00FF7F", 2: "🟢 #00BFFF", 3: "⚪ #FFFFFF", 4: "🟠 #FF8C00", 5: "🔴 #FF4500"}
         
         fix_cols = st.columns(len(horizon_gws) + 1)
@@ -640,7 +625,6 @@ elif menu == "🔄 Transfer Planner":
         for i, gw_name in enumerate(horizon_gws):
             fix_cols[i + 1].markdown(f"**{gw_name.replace('_xP', '')}**")
 
-        # Player Out Fixtures
         fix_cols[0].write(f"🔴 **{p_out['web_name']}**")
         for i, gw_name in enumerate(horizon_gws):
             gw_num = int(gw_name.replace("GW", "").replace("_xP", ""))
@@ -648,7 +632,6 @@ elif menu == "🔄 Transfer Planner":
             color_badge = fdr_colors.get(fdr, "⚪ #FFFFFF")
             fix_cols[i + 1].markdown(f"<span style='color:{color_badge.split(' ')[1]}; font-weight:bold;'>FDR {fdr}</span>", unsafe_allow_html=True)
 
-        # Player In Fixtures
         fix_cols[0].write(f"🟢 **{p_in['web_name']}**")
         for i, gw_name in enumerate(horizon_gws):
             gw_num = int(gw_name.replace("GW", "").replace("_xP", ""))
@@ -657,8 +640,6 @@ elif menu == "🔄 Transfer Planner":
             fix_cols[i + 1].markdown(f"<span style='color:{color_badge.split(' ')[1]}; font-weight:bold;'>FDR {fdr}</span>", unsafe_allow_html=True)
 
         st.markdown("---")
-        
-        # Apply transfer action
         if st.button("➕ Stage & Apply Transfer to Active Squad", type="primary"):
             new_squad_ids = [pid for pid in current_squad_ids if pid != player_out_id] + [player_in_id]
             st.session_state.custom_squad_ids = new_squad_ids
@@ -666,32 +647,70 @@ elif menu == "🔄 Transfer Planner":
             st.success(f"✅ Transfer Applied! Sold {p_out['web_name']}, bought {p_in['web_name']}.")
             st.rerun()
 
-# --- PLAYER EXPLORER PAGE ---
+# --- UPDATED: PLAYER EXPLORER PAGE WITH SEARCH BAR & GW1-GW10 EXPECTED POINTS COLUMNS ---
 elif menu == "🔍 Player Explorer & Differentials":
     st.title("🔍 Player Explorer & Differential Finder")
-    
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        only_differentials = st.checkbox("🌟 Show Differentials Only (< 10% Ownership)", value=False)
-    with col_f2:
-        pos_filter = st.selectbox("Filter by Position", options=["All", "GKP", "DEF", "MID", "FWD"])
+    st.caption("Search for any player in Premier League, filter position/ownership, and inspect expected points columns from GW1 to GW10.")
 
-    explorer_df = players_df[['web_name', 'team_short', 'position', 'now_cost', 'selected_by_percent', selected_gw_col, 'ep_next', 'avg_minutes']].copy()
+    # 1. Controls & Search Filter Inputs
+    col_search, col_pos, col_diff = st.columns([2, 1, 1])
     
+    with col_search:
+        search_query = st.text_input("🔍 Search Player or Team Name:", value="", placeholder="Type e.g., Haaland, Palmer, Arsenal...")
+        
+    with col_pos:
+        pos_filter = st.selectbox("Position Filter", options=["All", "GKP", "DEF", "MID", "FWD"])
+        
+    with col_diff:
+        only_differentials = st.checkbox("🌟 Differentials Only (< 10% Ownership)", value=False)
+
+    # 2. Extract Columns
+    gw_cols = [f'GW{i}_xP' for i in range(1, 11)]
+    
+    base_cols = ['web_name', 'team_short', 'position', 'now_cost', 'selected_by_percent', selected_gw_col]
+    all_explorer_cols = base_cols + [c for c in gw_cols if c != selected_gw_col] + ['ep_next', 'expected_goals', 'expected_assists', 'avg_minutes']
+    
+    explorer_df = players_df[all_explorer_cols].copy()
+    
+    # 3. Apply Search and Filters
+    if search_query:
+        query = search_query.strip().lower()
+        explorer_df = explorer_df[
+            explorer_df['web_name'].str.lower().str.contains(query) | 
+            explorer_df['team_short'].str.lower().str.contains(query)
+        ]
+        
     if only_differentials:
         explorer_df = explorer_df[explorer_df['selected_by_percent'] < 10.0]
+        
     if pos_filter != "All":
         explorer_df = explorer_df[explorer_df['position'] == pos_filter]
 
-    explorer_df = explorer_df.rename(columns={
+    # 4. Format Column Names
+    rename_dict = {
         'web_name': 'Player',
         'team_short': 'Team',
         'position': 'Pos',
         'now_cost': 'Cost (£m)',
         'selected_by_percent': 'Ownership (%)',
-        selected_gw_col: f'Active ({selected_gw})',
-        'ep_next': 'Official ep_next',
+        selected_gw_col: f'Target ({selected_gw}) xP',
+        'ep_next': 'ep_next',
+        'expected_goals': 'xG',
+        'expected_assists': 'xA',
         'avg_minutes': 'Avg Mins'
-    }).sort_values(by=f'Active ({selected_gw})', ascending=False)
+    }
     
-    st.dataframe(explorer_df, use_container_width=True)
+    # Add rename mapping for each GW column
+    for i in range(1, 11):
+        if f'GW{i}_xP' not in rename_dict:
+            rename_dict[f'GW{i}_xP'] = f'GW{i} xP'
+
+    explorer_df = explorer_df.rename(columns=rename_dict)
+    
+    # Sort primarily by selected GW expected points
+    sort_column = f'Target ({selected_gw}) xP'
+    explorer_df = explorer_df.sort_values(by=sort_column, ascending=False)
+
+    # 5. Display Interactive Table
+    st.markdown(f"Showing **{len(explorer_df)}** matching players:")
+    st.dataframe(explorer_df, use_container_width=True, hide_index=True)
