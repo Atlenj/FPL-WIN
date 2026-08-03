@@ -118,6 +118,9 @@ players_df['xP'] = (
     (players_df['chance_of_playing_next_round'] * 1.5)
 ).round(2)
 
+# Add display label for select boxes
+players_df['display_label'] = players_df['web_name'] + " (" + players_df['team_name'] + ") - £" + players_df['now_cost'].astype(str) + "m"
+
 # --- PITCH GENERATOR FUNCTION ---
 def generate_fpl_pitch(starting_11_df):
     fig = go.Figure()
@@ -173,6 +176,7 @@ menu = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 manager_id_input = st.sidebar.text_input("Enter FPL Manager ID", value="475093")
+use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", value=True, help="Check this to manually select your 11 players before Gameweek 1 starts!")
 
 # --- NAVIGATION ROUTING ---
 if menu == "📊 Dashboard Overview":
@@ -204,35 +208,68 @@ if menu == "📊 Dashboard Overview":
 elif menu == "🛡️ My Squad & Pitch View":
     st.title("🛡️ My Squad & Pitch View")
 
-    if not manager_id_input:
-        st.info("👈 Enter your FPL Manager ID in the sidebar.")
-    else:
-        user_data = fetch_user_squad(manager_id_input, current_gw)
-        if not user_data:
-            st.error("Could not load squad for ID 475093. Double check if Gameweek 1 has started or if your squad is set to public!")
-        else:
-            picks = user_data.get('picks', [])
-            my_player_ids = [p['element'] for p in picks]
+    starting_11 = pd.DataFrame()
+
+    # Manual Selection Mode (Pre-Season)
+    if use_manual_picker:
+        st.info("💡 **Pre-Season Mode:** Pick your starting 11 below to preview your team on the pitch!")
+        
+        gkps = players_df[players_df['position'] == 'GKP']
+        defs = players_df[players_df['position'] == 'DEF']
+        mids = players_df[players_df['position'] == 'MID']
+        fwds = players_df[players_df['position'] == 'FWD']
+
+        col_gkp, col_def, col_mid, col_fwd = st.columns(4)
+
+        with col_gkp:
+            st.markdown("### 🧤 Goalkeeper (1)")
+            selected_gkp = st.selectbox("GKP 1", options=gkps['id'].tolist(), format_func=lambda x: gkps[gkps['id']==x]['display_label'].values[0])
             
-            my_squad_df = players_df[players_df['id'].isin(my_player_ids)].copy()
-            pick_order = {p['element']: p['position'] for p in picks}
-            my_squad_df['squad_order'] = my_squad_df['id'].map(pick_order)
-            my_squad_df = my_squad_df.sort_values(by='squad_order')
+        with col_def:
+            st.markdown("### 🛡️ Defenders (3-5)")
+            selected_defs = st.multiselect("Defenders", options=defs['id'].tolist(), default=defs['id'].tolist()[:4], format_func=lambda x: defs[defs['id']==x]['display_label'].values[0], max_selections=5)
 
-            starting_11 = my_squad_df[my_squad_df['squad_order'] <= 11]
-            bench = my_squad_df[my_squad_df['squad_order'] > 11]
+        with col_mid:
+            st.markdown("### ⚙️ Midfielders (3-5)")
+            selected_mids = st.multiselect("Midfielders", options=mids['id'].tolist(), default=mids['id'].tolist()[:4], format_func=lambda x: mids[mids['id']==x]['display_label'].values[0], max_selections=5)
 
-            total_xp = starting_11['xP'].sum().round(2)
-            st.markdown(f"### 🎯 Squad Projected Points: **{total_xp:.2f} pts**")
+        with col_fwd:
+            st.markdown("### 🎯 Forwards (1-3)")
+            selected_fwds = st.multiselect("Forwards", options=fwds['id'].tolist(), default=fwds['id'].tolist()[:2], format_func=lambda x: fwds[fwds['id']==x]['display_label'].values[0], max_selections=3)
 
-            # Render Pitch
-            st.subheader("🏟️ Pitch Layout")
-            pitch_fig = generate_fpl_pitch(starting_11)
-            st.plotly_chart(pitch_fig, use_container_width=True)
+        selected_ids = [selected_gkp] + selected_defs + selected_mids + selected_fwds
+        starting_11 = players_df[players_df['id'].isin(selected_ids)].copy()
 
-            # Bench Table
-            st.subheader("🪑 Bench")
-            st.dataframe(bench[['web_name', 'team_name', 'position', 'now_cost', 'xP']], use_container_width=True)
+    # API Automatic Selection Mode
+    else:
+        if not manager_id_input:
+            st.info("👈 Enter your FPL Manager ID in the sidebar.")
+        else:
+            user_data = fetch_user_squad(manager_id_input, current_gw)
+            if not user_data:
+                st.warning("⚠️ API squad lookup is currently locked for pre-season. Toggle '🛠️ Pre-Season Pitch Builder' in the sidebar to manually select your squad!")
+            else:
+                picks = user_data.get('picks', [])
+                my_player_ids = [p['element'] for p in picks]
+                my_squad_df = players_df[players_df['id'].isin(my_player_ids)].copy()
+                pick_order = {p['element']: p['position'] for p in picks}
+                my_squad_df['squad_order'] = my_squad_df['id'].map(pick_order)
+                my_squad_df = my_squad_df.sort_values(by='squad_order')
+                starting_11 = my_squad_df[my_squad_df['squad_order'] <= 11]
+
+    # Render Pitch & Metrics if starting XI selected
+    if not starting_11.empty:
+        total_xp = starting_11['xP'].sum().round(2)
+        total_cost = starting_11['now_cost'].sum().round(1)
+        
+        m_col1, m_col2, m_col3 = st.columns(3)
+        m_col1.metric("Selected Players", len(starting_11))
+        m_col2.metric("Starting XI Cost", f"£{total_cost:.1f}m")
+        m_col3.metric("Projected Points", f"{total_xp:.2f} pts")
+
+        st.subheader("🏟️ Pitch View")
+        pitch_fig = generate_fpl_pitch(starting_11)
+        st.plotly_chart(pitch_fig, use_container_width=True)
 
 elif menu == "🔍 Player Explorer":
     st.title("🔍 Player Comparison")
