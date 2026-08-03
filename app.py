@@ -63,6 +63,17 @@ def load_fpl_bootstrap():
         return response.json()
     return None
 
+@st.cache_data(ttl=3600)
+def load_fpl_fixtures():
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    url = "https://fantasy.premierleague.com/api/fixtures/"
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json()
+    return []
+
 def fetch_user_squad(manager_id, current_gw):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -88,6 +99,7 @@ def fetch_user_squad(manager_id, current_gw):
 
 # Load base data
 raw_data = load_fpl_bootstrap()
+fixtures_data = load_fpl_fixtures()
 
 if not raw_data:
     st.error("⚠️ Failed to load data from official FPL API. Please refresh or try again later.")
@@ -125,38 +137,40 @@ players_df['expected_goals'] = pd.to_numeric(players_df.get('expected_goals', 0)
 players_df['expected_assists'] = pd.to_numeric(players_df.get('expected_assists', 0), errors='coerce').fillna(0.0)
 players_df['expected_goal_involvements'] = pd.to_numeric(players_df.get('expected_goal_involvements', 0), errors='coerce').fillna(0.0)
 players_df['expected_goals_conceded'] = pd.to_numeric(players_df.get('expected_goals_conceded', 0), errors='coerce').fillna(0.0)
-
-# --- REFINED XP FORMULA WITH PER-GAME XG/XA & MINUTES WEIGHTING ---
-players_df['form'] = pd.to_numeric(players_df['form'], errors='coerce').fillna(0)
-players_df['points_per_game'] = pd.to_numeric(players_df['points_per_game'], errors='coerce').fillna(0)
-players_df['chance_of_playing_next_round'] = players_df['chance_of_playing_next_round'].fillna(100) / 100.0
-
 players_df['minutes'] = pd.to_numeric(players_df['minutes'], errors='coerce').fillna(0)
 players_df['games_played'] = (players_df['minutes'] / 90.0).clip(lower=1.0)
 players_df['avg_minutes'] = players_df['minutes'] / players_df['games_played']
 
-minutes_factor = (players_df['avg_minutes'] / 90.0).clip(upper=1.0)
+# --- OFFICIAL API EXPECTED POINTS + FDR FIXTURE DYNAMICS ---
+players_df['ep_next'] = pd.to_numeric(players_df['ep_next'], errors='coerce').fillna(0.0)
 
-players_df['xg_per_game'] = players_df['expected_goals'] / players_df['games_played']
-players_df['xa_per_game'] = players_df['expected_assists'] / players_df['games_played']
+# Build dynamic team fixture dictionary (GW1–GW10)
+team_fixtures = {}
+for f in fixtures_data:
+    gw = f.get('event')
+    if gw and 1 <= gw <= 10:
+        team_fixtures.setdefault(f['team_h'], {})[gw] = f['team_h_difficulty']
+        team_fixtures.setdefault(f['team_a'], {})[gw] = f['team_a_difficulty']
 
-xg_xa_threat_per_game = (players_df['xg_per_game'] * 4.0) + (players_df['xa_per_game'] * 3.0)
-
-base_xp = (
-    (players_df['form'] * 0.35) + 
-    (players_df['points_per_game'] * 0.35) + 
-    (xg_xa_threat_per_game * 0.20) + 
-    (players_df['chance_of_playing_next_round'] * 0.5)
-) * minutes_factor
-
+# Project expected points for GW1–GW10 scaling ep_next via FDR
 for gw in range(1, 11):
-    decay_factor = 1.0 - ((gw - 1) * 0.015)
-    players_df[f'GW{gw}_xP'] = (base_xp * decay_factor).round(2)
+    def calculate_gw_xp(row):
+        base_ep = row['ep_next']
+        team_id = row['team']
+        
+        # Get fixture difficulty rating for this team in the specified GW (Default 3 if blank)
+        fdr = team_fixtures.get(team_id, {}).get(gw, 3)
+        
+        # FDR modifier: FDR 1 -> +20%, FDR 3 -> Baseline, FDR 5 -> -20%
+        fixture_modifier = 1.0 + ((3 - fdr) * 0.10)
+        
+        return round(base_ep * fixture_modifier, 2)
+
+    players_df[f'GW{gw}_xP'] = players_df.apply(calculate_gw_xp, axis=1)
 
 players_df['display_label'] = players_df['web_name'] + " (" + players_df['team_short'] + ") - £" + players_df['now_cost'].astype(str) + "m"
 
 # --- SIDEBAR CONTROLS ---
-# Clickable title header: routes back to Dashboard Overview
 if st.sidebar.button("⚽ PL-Kameratene", type="tertiary", use_container_width=True):
     st.session_state.menu_selection = "📊 Dashboard Overview"
     st.rerun()
@@ -197,26 +211,21 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig = go.Figure()
 
     # --- 1. PITCH GEOMETRY & BACKGROUND ---
-    # Grass Background
     fig.add_shape(type="rect", x0=0, y0=20, x1=100, y1=140, 
                   fillcolor="#0a1a12", line=dict(color="#1f422e", width=2))
     
-    # Outer Boundary Line
     fig.add_shape(type="rect", x0=4, y0=24, x1=96, y1=136, line=dict(color="#2e6345", width=2))
     
-    # Halfway Line & Center Circle
     fig.add_shape(type="line", x0=4, y0=80, x1=96, y1=80, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=49, y0=79, x1=51, y1=81, fillcolor="#2e6345", line=dict(color="#2e6345"))
     
-    # Penalty Boxes
     fig.add_shape(type="rect", x0=22, y0=24, x1=78, y1=45, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="rect", x0=36, y0=24, x1=64, y1=31, line=dict(color="#2e6345", width=2))
     
     fig.add_shape(type="rect", x0=22, y0=115, x1=78, y1=136, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="rect", x0=36, y0=129, x1=64, y1=136, line=dict(color="#2e6345", width=2))
 
-    # Bench Zone Container
     fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=18, 
                   fillcolor="#060c08", line=dict(color="#1f422e", width=1.5))
     fig.add_annotation(x=4, y=15.5, text="<b>SUBSTITUTES BENCH</b>", showarrow=False, 
@@ -228,7 +237,6 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     def render_player(x, y, player, is_bench=False):
         is_captain = (player['id'] == captain_id) and not is_bench
         
-        # Color coding
         card_bg = "#1f1800" if is_captain else "#11161d"
         card_border = "#FFD700" if is_captain else "#2B313E"
         pts_color = "#FFD700" if is_captain else "#00FF7F"
@@ -236,7 +244,7 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
         
         capt_badge = " <b style='color:#FFD700;'>(C)</b>" if is_captain else ""
         
-        # 1. Jersey Node Circle
+        # Jersey Node Circle
         fig.add_trace(go.Scatter(
             x=[x], y=[y],
             mode="markers+text",
@@ -253,7 +261,7 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
             showlegend=False
         ))
 
-        # 2. Compact, Non-Overlapping Player Card (Using Fixed Pixel Y-Shift)
+        # Compact Player Card
         card_text = (
             f"<b>{player['web_name']}</b>{capt_badge}<br>"
             f"<span style='color:{pts_color}; font-weight:bold;'>{player['xP']} pts</span>"
@@ -265,7 +273,7 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
 
         fig.add_annotation(
             x=x, y=y,
-            yshift=-32 if not is_bench else -24,  # Anchors card directly under circle regardless of aspect ratio
+            yshift=-32 if not is_bench else -24,
             text=card_text,
             showarrow=False,
             font=dict(family="Arial", size=10),
@@ -282,7 +290,6 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
         count = len(pos_players)
         
         if count > 0:
-            # Dynamic spacing with margin to prevent side-clipping and cards touching
             x_coords = [8 + (84 * (i + 1) / (count + 1)) for i in range(count)]
             for idx, (_, player) in enumerate(pos_players.iterrows()):
                 render_player(x_coords[idx], y_val, player, is_bench=False)
@@ -362,7 +369,6 @@ if menu == "📊 Dashboard Overview":
     
     st.markdown(f"### 📋 {p_data['web_name']} ({p_data['team_name']}) — Performance Stats")
     
-    # Summary Metrics
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Position", p_data['position'])
     c2.metric("Cost", f"£{p_data['now_cost']}m")
@@ -372,8 +378,8 @@ if menu == "📊 Dashboard Overview":
 
     st.markdown("#### 📊 Official FPL Metrics Breakdown")
     
-    # Granular FPL Stats Table
     fpl_stats_table = pd.DataFrame([{
+        "Official ep_next": p_data.get('ep_next', 0),
         "GS": p_data.get('goals_scored', 0),
         "A": p_data.get('assists', 0),
         "xG": f"{p_data.get('expected_goals', 0):.2f}",
@@ -496,7 +502,7 @@ elif menu == "🔍 Player Explorer & Differentials":
     with col_f2:
         pos_filter = st.selectbox("Filter by Position", options=["All", "GKP", "DEF", "MID", "FWD"])
 
-    explorer_df = players_df[['web_name', 'team_short', 'position', 'now_cost', 'selected_by_percent', selected_gw_col, 'form', 'avg_minutes']].copy()
+    explorer_df = players_df[['web_name', 'team_short', 'position', 'now_cost', 'selected_by_percent', selected_gw_col, 'ep_next', 'avg_minutes']].copy()
     
     if only_differentials:
         explorer_df = explorer_df[explorer_df['selected_by_percent'] < 10.0]
@@ -510,7 +516,7 @@ elif menu == "🔍 Player Explorer & Differentials":
         'now_cost': 'Cost (£m)',
         'selected_by_percent': 'Ownership (%)',
         selected_gw_col: f'Active ({selected_gw})',
-        'form': 'Form',
+        'ep_next': 'Official ep_next',
         'avg_minutes': 'Avg Mins'
     }).sort_values(by=f'Active ({selected_gw})', ascending=False)
     
