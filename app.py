@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION & DARK THEME SETUP ---
 st.set_page_config(
-    page_title="FPL AI Coach Pro",
+    page_title="Atle's fpl",
     page_icon="⚽",
     layout="wide",
     initial_sidebar_state="expanded"
