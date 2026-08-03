@@ -101,30 +101,28 @@ players_df['position'] = players_df['element_type'].map(pos_map)
 players_df['now_cost'] = players_df['now_cost'] / 10.0
 players_df['selected_by_percent'] = pd.to_numeric(players_df['selected_by_percent'], errors='coerce').fillna(0.0)
 
+# Extract official FPL stats cleanly
+players_df['expected_goals'] = pd.to_numeric(players_df.get('expected_goals', 0), errors='coerce').fillna(0.0)
+players_df['expected_assists'] = pd.to_numeric(players_df.get('expected_assists', 0), errors='coerce').fillna(0.0)
+players_df['expected_goal_involvements'] = pd.to_numeric(players_df.get('expected_goal_involvements', 0), errors='coerce').fillna(0.0)
+players_df['expected_goals_conceded'] = pd.to_numeric(players_df.get('expected_goals_conceded', 0), errors='coerce').fillna(0.0)
+
 # --- REFINED XP FORMULA WITH PER-GAME XG/XA & MINUTES WEIGHTING ---
 players_df['form'] = pd.to_numeric(players_df['form'], errors='coerce').fillna(0)
 players_df['points_per_game'] = pd.to_numeric(players_df['points_per_game'], errors='coerce').fillna(0)
 players_df['chance_of_playing_next_round'] = players_df['chance_of_playing_next_round'].fillna(100) / 100.0
 
-# 1. Calculate realistic minutes fraction to filter fringe / low-minute players
 players_df['minutes'] = pd.to_numeric(players_df['minutes'], errors='coerce').fillna(0)
 players_df['games_played'] = (players_df['minutes'] / 90.0).clip(lower=1.0)
 players_df['avg_minutes'] = players_df['minutes'] / players_df['games_played']
 
-# Minutes factor: scale down players averaging under 60 mins
 minutes_factor = (players_df['avg_minutes'] / 90.0).clip(upper=1.0)
-
-# 2. Extract xG / xA and convert from SEASON TOTALS to PER-GAME AVERAGES
-players_df['expected_goals'] = pd.to_numeric(players_df.get('expected_goals', 0), errors='coerce').fillna(0)
-players_df['expected_assists'] = pd.to_numeric(players_df.get('expected_assists', 0), errors='coerce').fillna(0)
 
 players_df['xg_per_game'] = players_df['expected_goals'] / players_df['games_played']
 players_df['xa_per_game'] = players_df['expected_assists'] / players_df['games_played']
 
-# Per-game threat from xG (4 pts per goal) and xA (3 pts per assist)
 xg_xa_threat_per_game = (players_df['xg_per_game'] * 4.0) + (players_df['xa_per_game'] * 3.0)
 
-# 3. Balanced Single Gameweek xP Formula
 base_xp = (
     (players_df['form'] * 0.35) + 
     (players_df['points_per_game'] * 0.35) + 
@@ -151,15 +149,13 @@ selected_gw = st.sidebar.selectbox(
 selected_gw_col = f"{selected_gw}_xP"
 players_df['xP'] = players_df[selected_gw_col]
 
-# --- PITCH & BENCH GENERATOR FUNCTION ---
+# --- PITCH GENERATOR FUNCTION ---
 def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig = go.Figure()
 
-    # Main Pitch Surface
     fig.add_shape(type="rect", x0=0, y0=18, x1=100, y1=100, 
                   fillcolor="#12251a", line=dict(color="#2e593f", width=2))
     
-    # Pitch Markings
     fig.add_shape(type="rect", x0=3, y0=21, x1=97, y1=97, line=dict(color="#458a60", width=2))
     fig.add_shape(type="line", x0=3, y0=59, x1=97, y1=59, line=dict(color="#458a60", width=2))
     fig.add_shape(type="circle", x0=38, y0=49, x1=62, y1=69, line=dict(color="#458a60", width=2))
@@ -167,7 +163,6 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig.add_shape(type="rect", x0=22, y0=21, x1=78, y1=38, line=dict(color="#458a60", width=2))
     fig.add_shape(type="rect", x0=22, y0=80, x1=78, y1=97, line=dict(color="#458a60", width=2))
 
-    # Bench Zone
     fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=16, 
                   fillcolor="#0b1610", line=dict(color="#1f3829", width=2))
     fig.add_shape(type="line", x0=0, y0=16, x1=100, y1=16, line=dict(color="#2e593f", width=1, dash="dash"))
@@ -282,21 +277,49 @@ if menu == "📊 Dashboard Overview":
     col_select, _ = st.columns([1, 2])
     with col_select:
         chosen_player = st.selectbox(
-            "🔍 Inspect Player Expected Stats:",
+            "🔍 Inspect Player Stats:",
             options=top_15['web_name'].tolist(),
             index=top_15['web_name'].tolist().index(selected_player_name) if selected_player_name in top_15['web_name'].tolist() else 0
         )
 
     p_data = players_df[players_df['web_name'] == chosen_player].iloc[0]
     
-    st.markdown(f"### 📋 {p_data['web_name']} ({p_data['team_name']}) — Detailed Projections")
+    st.markdown(f"### 📋 {p_data['web_name']} ({p_data['team_name']}) — Complete Performance Stats")
     
-    p_col1, p_col2, p_col3, p_col4, p_col5 = st.columns(5)
-    p_col1.metric("Position", p_data['position'])
-    p_col2.metric("Cost", f"£{p_data['now_cost']}m")
-    p_col3.metric(f"Projected xP ({selected_gw})", f"{p_data['xP']} pts")
-    p_col4.metric("Avg Minutes", f"{int(p_data['avg_minutes'])} mins")
-    p_col5.metric("Ownership", f"{p_data['selected_by_percent']}%")
+    # 1. Summary Header Bar
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Position", p_data['position'])
+    c2.metric("Cost", f"£{p_data['now_cost']}m")
+    c3.metric(f"Projected xP ({selected_gw})", f"{p_data['xP']} pts")
+    c4.metric("Avg Minutes", f"{int(p_data['avg_minutes'])} mins")
+    c5.metric("Ownership", f"{p_data['selected_by_percent']}%")
+
+    st.markdown("#### 📊 Official FPL Metrics Breakdown")
+    
+    # 2. Compact FPL Stats Table (GS, A, xG, xA, xGI, CS, GC, xGC, BPS, Yellow/Red Cards, etc.)
+    fpl_stats_table = pd.DataFrame([{
+        "GS": p_data.get('goals_scored', 0),
+        "A": p_data.get('assists', 0),
+        "xG": f"{p_data.get('expected_goals', 0):.2f}",
+        "xA": f"{p_data.get('expected_assists', 0):.2f}",
+        "xGI": f"{p_data.get('expected_goal_involvements', 0):.2f}",
+        "CS": p_data.get('clean_sheets', 0),
+        "GC": p_data.get('goals_conceded', 0),
+        "xGC": f"{p_data.get('expected_goals_conceded', 0):.2f}",
+        "S": p_data.get('saves', 0),
+        "BP": p_data.get('bonus', 0),
+        "BPS": p_data.get('bps', 0),
+        "I": p_data.get('influence', 0),
+        "C": p_data.get('creativity', 0),
+        "T": p_data.get('threat', 0),
+        "YC": p_data.get('yellow_cards', 0),
+        "RC": p_data.get('red_cards', 0),
+        "OG": p_data.get('own_goals', 0),
+        "PM": p_data.get('penalties_missed', 0),
+        "PS": p_data.get('penalties_saved', 0)
+    }])
+    
+    st.dataframe(fpl_stats_table, use_container_width=True, hide_index=True)
 
 # --- SQUAD & PITCH VIEW PAGE ---
 elif menu == "🛡️ My Squad & Pitch View":
