@@ -226,7 +226,9 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     
     fig.add_shape(type="rect", x0=4, y0=24, x1=96, y1=136, line=dict(color="#2e6345", width=2))
     
-    fig.add_shape(type="line", x0=4, y0=80, x1=96, y0=80, line=dict(color="#2e6345", width=2))
+    # Halfway line (Fixed y1=80)
+    fig.add_shape(type="line", x0=4, y0=80, x1=96, y1=80, line=dict(color="#2e6345", width=2))
+    
     fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=49, y0=79, x1=51, y1=81, fillcolor="#2e6345", line=dict(color="#2e6345"))
     
@@ -647,7 +649,7 @@ elif menu == "🔄 Transfer Planner":
             st.success(f"✅ Transfer Applied! Sold {p_out['web_name']}, bought {p_in['web_name']}.")
             st.rerun()
 
-# --- UPDATED: PLAYER EXPLORER PAGE WITH SEARCH BAR & GW1-GW10 EXPECTED POINTS COLUMNS ---
+# --- PLAYER EXPLORER PAGE WITH SEARCH BAR & GW1-GW10 EXPECTED POINTS COLUMNS ---
 elif menu == "🔍 Player Explorer & Differentials":
     st.title("🔍 Player Explorer & Differential Finder")
     st.caption("Search for any player in Premier League, filter position/ownership, and inspect expected points columns from GW1 to GW10.")
