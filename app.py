@@ -192,36 +192,46 @@ st.sidebar.markdown("---")
 manager_id_input = st.sidebar.text_input("Enter FPL Manager ID", value="475093")
 use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", value=True)
 
-# --- REVISED PITCH GENERATOR FUNCTION ---
+# --- OVERHAULED & PROPORTIONED PITCH GENERATOR FUNCTION ---
 def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig = go.Figure()
 
-    # Pitch Background shapes
+    # --- PITCH GEOMETRY & LINES (100x100 grid) ---
+    # Grass Background
     fig.add_shape(type="rect", x0=0, y0=18, x1=100, y1=100, 
                   fillcolor="#12251a", line=dict(color="#2e593f", width=2))
     
-    fig.add_shape(type="rect", x0=3, y0=21, x1=97, y1=97, line=dict(color="#458a60", width=2))
-    fig.add_shape(type="line", x0=3, y0=59, x1=97, y1=59, line=dict(color="#458a60", width=2))
+    # Outer Boundary Line
+    fig.add_shape(type="rect", x0=4, y0=22, x1=96, y1=96, line=dict(color="#458a60", width=2))
+    # Halfway Line
+    fig.add_shape(type="line", x0=4, y0=59, x1=96, y1=59, line=dict(color="#458a60", width=2))
+    # Center Circle & Spot
     fig.add_shape(type="circle", x0=38, y0=49, x1=62, y1=69, line=dict(color="#458a60", width=2))
     fig.add_shape(type="circle", x0=49.2, y0=58.2, x1=50.8, y1=59.8, fillcolor="#458a60", line=dict(color="#458a60"))
-    fig.add_shape(type="rect", x0=22, y0=21, x1=78, y1=38, line=dict(color="#458a60", width=2))
-    fig.add_shape(type="rect", x0=22, y0=80, x1=78, y1=97, line=dict(color="#458a60", width=2))
+    
+    # Bottom Box (Penalty Box + Goal Area)
+    fig.add_shape(type="rect", x0=22, y0=22, x1=78, y1=38, line=dict(color="#458a60", width=2))
+    fig.add_shape(type="rect", x0=36, y0=22, x1=64, y1=28, line=dict(color="#458a60", width=2))
+    
+    # Top Box (Penalty Box + Goal Area)
+    fig.add_shape(type="rect", x0=22, y0=80, x1=78, y1=96, line=dict(color="#458a60", width=2))
+    fig.add_shape(type="rect", x0=36, y0=90, x1=64, y1=96, line=dict(color="#458a60", width=2))
 
-    # Bench shape
+    # Bench Zone (Separate Dark Area at Bottom)
     fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=16, 
                   fillcolor="#0b1610", line=dict(color="#1f3829", width=2))
-    fig.add_shape(type="line", x0=0, y0=16, x1=100, y1=16, line=dict(color="#2e593f", width=1, dash="dash"))
-    fig.add_annotation(x=5, y=14, text="<b>SUBSTITUTES BENCH</b>", showarrow=False, font=dict(color="#8fa396", size=10), xanchor="left")
+    fig.add_annotation(x=5, y=13.5, text="<b>SUBSTITUTES BENCH</b>", showarrow=False, 
+                       font=dict(color="#8fa396", size=11, family="Arial"), xanchor="left")
 
-    pos_y_map = {'GKP': 27, 'DEF': 47, 'MID': 70, 'FWD': 89}
+    pos_y_map = {'GKP': 27, 'DEF': 46, 'MID': 68, 'FWD': 87}
 
-    # Plot Starting XI
+    # --- PLOT STARTING XI ---
     for pos, y_val in pos_y_map.items():
         pos_players = starting_11_df[starting_11_df['position'] == pos]
         count = len(pos_players)
         
         if count > 0:
-            x_coords = [3 + (94 * (i + 1) / (count + 1)) for i in range(count)]
+            x_coords = [4 + (92 * (i + 1) / (count + 1)) for i in range(count)]
             
             for idx, (_, player) in enumerate(pos_players.iterrows()):
                 x_val = x_coords[idx]
@@ -229,47 +239,85 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
                 
                 badge_label = " (C)" if is_captain else ""
                 border_color = "#FFD700" if is_captain else "#00FF7F"
-                marker_color = "#5c4000" if is_captain else "#37003c"
+                marker_color = "#5c4000" if is_captain else "#1E222D"
 
-                card_text = f"<b>{player['web_name']}{badge_label}</b><br>{player['xP']} pts | £{player['now_cost']}m"
-                
+                # 1. Plot Node Marker (Player Jersey Circle)
                 fig.add_trace(go.Scatter(
                     x=[x_val], y=[y_val],
-                    mode="markers+text",
-                    marker=dict(size=28, color=marker_color, line=dict(width=3, color=border_color)),
-                    text=[card_text],
-                    textposition="bottom center",
-                    textfont=dict(color="#FFFFFF", size=11, family="Arial"),
+                    mode="markers",
+                    marker=dict(size=24, color=marker_color, line=dict(width=3, color=border_color)),
                     hoverinfo="text",
+                    hovertext=f"{player['web_name']} - {player['xP']} pts",
                     showlegend=False
                 ))
 
-    # Plot Bench
+                # 2. Add Dedicated Player Card Annotation (Guarantees Text Renders Below Marker)
+                card_text = f"<b>{player['web_name']}{badge_label}</b><br><span style='color:#00FF7F;'>{player['xP']} pts</span> | £{player['now_cost']}m"
+                fig.add_annotation(
+                    x=x_val, y=y_val - 4.2,
+                    text=card_text,
+                    showarrow=False,
+                    font=dict(color="#FFFFFF", size=10, family="Arial"),
+                    align="center",
+                    bgcolor="rgba(14, 17, 23, 0.85)",
+                    bordercolor=border_color,
+                    borderwidth=1,
+                    borderpad=3
+                )
+
+    # --- PLOT BENCH PLAYERS ---
     if not bench_df.empty:
         bench_count = len(bench_df)
         bench_x_coords = [10 + (80 * (i + 1) / (bench_count + 1)) for i in range(bench_count)]
         
         for idx, (_, player) in enumerate(bench_df.iterrows()):
             x_val = bench_x_coords[idx]
-            card_text = f"<b>{player['web_name']}</b><br>{player['xP']} pts"
             
+            # Bench Marker
             fig.add_trace(go.Scatter(
-                x=[x_val], y=[7],
-                mode="markers+text",
-                marker=dict(size=22, color="#1b2a22", line=dict(width=2, color="#6b8e7b")),
-                text=[card_text],
-                textposition="bottom center",
-                textfont=dict(color="#8fa396", size=10, family="Arial"),
+                x=[x_val], y=[6.5],
+                mode="markers",
+                marker=dict(size=18, color="#1b2a22", line=dict(width=2, color="#6b8e7b")),
                 hoverinfo="text",
+                hovertext=f"{player['web_name']} - {player['xP']} pts",
                 showlegend=False
             ))
+            
+            # Bench Annotation Label
+            card_text = f"<b>{player['web_name']}</b><br><span style='color:#00FF7F;'>{player['xP']} pts</span>"
+            fig.add_annotation(
+                x=x_val, y=2.8,
+                text=card_text,
+                showarrow=False,
+                font=dict(color="#8fa396", size=9, family="Arial"),
+                align="center",
+                bgcolor="rgba(11, 22, 16, 0.85)",
+                bordercolor="#2e593f",
+                borderwidth=1,
+                borderpad=2
+            )
 
+    # --- PROPORTION & LAYOUT CONFIGURATION ---
     fig.update_layout(
-        xaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
-        yaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
-        height=720,
+        xaxis=dict(
+            range=[-2, 102], 
+            showgrid=False, 
+            zeroline=False, 
+            showticklabels=False, 
+            fixedrange=True
+        ),
+        yaxis=dict(
+            range=[-2, 102], 
+            showgrid=False, 
+            zeroline=False, 
+            showticklabels=False, 
+            fixedrange=True,
+            scaleanchor="x",  # LOCKS ASPECT RATIO PREVENTING DISTORTION
+            scaleratio=1
+        ),
+        height=750,
         margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="#12251a",
+        plot_bgcolor="#0E1117",
         paper_bgcolor="#0E1117"
     )
     return fig
