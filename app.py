@@ -119,7 +119,6 @@ base_xp = (
 )
 
 # Generate single-GW predictions for GW1 through GW10
-# (Includes slight realistic fixture variance decay per gameweek)
 for gw in range(1, 11):
     decay_factor = 1.0 - ((gw - 1) * 0.015)  # Slight form decay further into the future
     players_df[f'GW{gw}_xP'] = (base_xp * decay_factor).round(2)
@@ -254,7 +253,7 @@ if menu == "📊 Dashboard Overview":
 
     fig = px.bar(
         top_15, x='web_name', y='xP', color='position', text='xP', template='plotly_dark',
-        color_discrete_map={'GKP': '#FFD700', 'DEF': '#00BFFF', 'MID': '#00FF7F', 'FFWD': '#FF4500'}
+        color_discrete_map={'GKP': '#FFD700', 'DEF': '#00BFFF', 'MID': '#00FF7F', 'FWD': '#FF4500'}
     )
     fig.update_traces(texttemplate='%{text}', textposition='outside')
     fig.update_layout(xaxis_title="Player", yaxis_title=f"Expected Points in {selected_gw}", height=450)
@@ -365,17 +364,20 @@ elif menu == "🔍 Player Explorer":
     st.markdown("*(Showing predicted points for single Gameweeks GW1 through GW10)*")
     
     gw_cols = [f'GW{i}_xP' for i in range(1, 11)]
-    explorer_df = players_df[['web_name', 'team_name', 'position', 'now_cost', selected_gw_col] + gw_cols].copy()
+    explorer_df = players_df[['web_name', 'team_name', 'position', 'now_cost'] + gw_cols].copy()
     
+    # Rename columns cleanly
     col_rename = {
         'web_name': 'Player',
         'team_name': 'Team',
         'position': 'Pos',
-        'now_cost': 'Cost (£m)',
-        selected_gw_col: f'Active ({selected_gw})'
+        'now_cost': 'Cost (£m)'
     }
     for i in range(1, 11):
         col_rename[f'GW{i}_xP'] = f'GW{i}'
         
-    explorer_df = explorer_df.rename(columns=col_rename).sort_values(by=f'Active ({selected_gw})', ascending=False)
+    explorer_df = explorer_df.rename(columns=col_rename)
+    
+    # Sort safely by selected active GW
+    explorer_df = explorer_df.sort_values(by=selected_gw, ascending=False)
     st.dataframe(explorer_df, use_container_width=True)
