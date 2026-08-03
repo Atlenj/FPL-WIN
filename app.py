@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION & DARK THEME SETUP ---
 st.set_page_config(
-    page_title="Atle's fpl",
+    page_title="PL-Kameratene",
     page_icon="⚽",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -29,8 +29,21 @@ st.markdown("""
         background-color: #161922;
         border-right: 1px solid #2B313E;
     }
+    /* Style header button to look like a clean title heading */
+    div[data-testid="stSidebar"] button[kind="tertiary"] {
+        font-size: 24px !important;
+        font-weight: 800 !important;
+        color: #00FF7F !important;
+        padding: 0px !important;
+        text-align: left !important;
+        justify-content: flex-start !important;
+    }
     </style>
 """, unsafe_allow_html=True)
+
+# Initialize navigation state
+if "menu_selection" not in st.session_state:
+    st.session_state.menu_selection = "📊 Dashboard Overview"
 
 # --- API DATA FETCHING ---
 @st.cache_data(ttl=3600)
@@ -101,7 +114,7 @@ players_df['position'] = players_df['element_type'].map(pos_map)
 players_df['now_cost'] = players_df['now_cost'] / 10.0
 players_df['selected_by_percent'] = pd.to_numeric(players_df['selected_by_percent'], errors='coerce').fillna(0.0)
 
-# Extract official FPL stats cleanly
+# Clean FPL stats
 players_df['expected_goals'] = pd.to_numeric(players_df.get('expected_goals', 0), errors='coerce').fillna(0.0)
 players_df['expected_assists'] = pd.to_numeric(players_df.get('expected_assists', 0), errors='coerce').fillna(0.0)
 players_df['expected_goal_involvements'] = pd.to_numeric(players_df.get('expected_goal_involvements', 0), errors='coerce').fillna(0.0)
@@ -137,7 +150,11 @@ for gw in range(1, 11):
 players_df['display_label'] = players_df['web_name'] + " (" + players_df['team_short'] + ") - £" + players_df['now_cost'].astype(str) + "m"
 
 # --- SIDEBAR CONTROLS ---
-st.sidebar.title("⚽ FPL AI Coach Pro")
+# Clickable title header: routes back to Dashboard Overview
+if st.sidebar.button("⚽ PL-Kameratene", type="tertiary", use_container_width=True):
+    st.session_state.menu_selection = "📊 Dashboard Overview"
+    st.rerun()
+
 st.sidebar.markdown(f"**Current Gameweek:** GW{current_gw}")
 
 selected_gw = st.sidebar.selectbox(
@@ -148,6 +165,26 @@ selected_gw = st.sidebar.selectbox(
 
 selected_gw_col = f"{selected_gw}_xP"
 players_df['xP'] = players_df[selected_gw_col]
+
+# Synchronized navigation menu
+menu_options = [
+    "📊 Dashboard Overview", 
+    "🛡️ My Squad & Pitch View", 
+    "🔍 Player Explorer & Differentials"
+]
+
+menu = st.sidebar.radio(
+    "Navigation", 
+    options=menu_options,
+    index=menu_options.index(st.session_state.menu_selection),
+    key="nav_radio"
+)
+
+st.session_state.menu_selection = menu
+
+st.sidebar.markdown("---")
+manager_id_input = st.sidebar.text_input("Enter FPL Manager ID", value="475093")
+use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", value=True)
 
 # --- PITCH GENERATOR FUNCTION ---
 def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
@@ -227,19 +264,9 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     )
     return fig
 
-# --- NAVIGATION ROUTING ---
-menu = st.sidebar.radio(
-    "Navigation", 
-    ["📊 Dashboard Overview", "🛡️ My Squad & Pitch View", "🔍 Player Explorer & Differentials"]
-)
-
-st.sidebar.markdown("---")
-manager_id_input = st.sidebar.text_input("Enter FPL Manager ID", value="475093")
-use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", value=True)
-
 # --- DASHBOARD OVERVIEW PAGE ---
 if menu == "📊 Dashboard Overview":
-    st.title(f"📊 FPL Dashboard & Insights ({selected_gw})")
+    st.title(f"📊 PL-Kameratene Dashboard ({selected_gw})")
 
     col_gkp, col_def, col_mid, col_fwd = st.columns(4)
     
@@ -284,9 +311,9 @@ if menu == "📊 Dashboard Overview":
 
     p_data = players_df[players_df['web_name'] == chosen_player].iloc[0]
     
-    st.markdown(f"### 📋 {p_data['web_name']} ({p_data['team_name']}) — Complete Performance Stats")
+    st.markdown(f"### 📋 {p_data['web_name']} ({p_data['team_name']}) — Performance Stats")
     
-    # 1. Summary Header Bar
+    # 1. Summary Header
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Position", p_data['position'])
     c2.metric("Cost", f"£{p_data['now_cost']}m")
@@ -296,7 +323,7 @@ if menu == "📊 Dashboard Overview":
 
     st.markdown("#### 📊 Official FPL Metrics Breakdown")
     
-    # 2. Compact FPL Stats Table (GS, A, xG, xA, xGI, CS, GC, xGC, BPS, Yellow/Red Cards, etc.)
+    # 2. Granular FPL Stats Table
     fpl_stats_table = pd.DataFrame([{
         "GS": p_data.get('goals_scored', 0),
         "A": p_data.get('assists', 0),
