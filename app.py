@@ -192,113 +192,109 @@ st.sidebar.markdown("---")
 manager_id_input = st.sidebar.text_input("Enter FPL Manager ID", value="475093")
 use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", value=True)
 
-# --- RE-ENGINEERED FPL PITCH VISUALIZER ---
+# --- RE-ENGINEERED FPL PITCH VISUALIZER (NO OVERLAPS / FIXED PIXEL YSHIFT) ---
 def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig = go.Figure()
 
-    # --- 1. PITCH GEOMETRY & BACKGROUND (Standard Vertical Orientation: X 0..100, Y 0..140) ---
-    # Grass Background with modern dark emerald tone
+    # --- 1. PITCH GEOMETRY & BACKGROUND ---
+    # Grass Background
     fig.add_shape(type="rect", x0=0, y0=20, x1=100, y1=140, 
                   fillcolor="#0a1a12", line=dict(color="#1f422e", width=2))
     
     # Outer Boundary Line
-    fig.add_shape(type="rect", x0=5, y0=25, x1=95, y1=135, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="rect", x0=4, y0=24, x1=96, y1=136, line=dict(color="#2e6345", width=2))
     
     # Halfway Line & Center Circle
-    fig.add_shape(type="line", x0=5, y0=80, x1=95, y1=80, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="line", x0=4, y0=80, x1=96, y1=80, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=49, y0=79, x1=51, y1=81, fillcolor="#2e6345", line=dict(color="#2e6345"))
     
-    # Bottom Box (Goalkeeper Area & Penalty Box)
-    fig.add_shape(type="rect", x0=22, y0=25, x1=78, y1=45, line=dict(color="#2e6345", width=2))
-    fig.add_shape(type="rect", x0=36, y0=25, x1=64, y1=32, line=dict(color="#2e6345", width=2))
-    fig.add_shape(type="circle", x0=49, y0=35, x1=51, y1=37, fillcolor="#2e6345", line=dict(color="#2e6345"))
+    # Penalty Boxes
+    fig.add_shape(type="rect", x0=22, y0=24, x1=78, y1=45, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="rect", x0=36, y0=24, x1=64, y1=31, line=dict(color="#2e6345", width=2))
     
-    # Top Box (Opponent Goal Area)
-    fig.add_shape(type="rect", x0=22, y0=115, x1=78, y1=135, line=dict(color="#2e6345", width=2))
-    fig.add_shape(type="rect", x0=36, y0=128, x1=64, y1=135, line=dict(color="#2e6345", width=2))
-    fig.add_shape(type="circle", x0=49, y0=123, x1=51, y1=125, fillcolor="#2e6345", line=dict(color="#2e6345"))
+    fig.add_shape(type="rect", x0=22, y0=115, x1=78, y1=136, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="rect", x0=36, y0=129, x1=64, y1=136, line=dict(color="#2e6345", width=2))
 
-    # Bench Zone (Sleek Dark Container)
-    fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=17, 
+    # Bench Zone Container
+    fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=18, 
                   fillcolor="#060c08", line=dict(color="#1f422e", width=1.5))
-    fig.add_annotation(x=5, y=14.5, text="<b>SUBSTITUTES BENCH</b>", showarrow=False, 
+    fig.add_annotation(x=4, y=15.5, text="<b>SUBSTITUTES BENCH</b>", showarrow=False, 
                        font=dict(color="#5a826b", size=10, family="Arial"), xanchor="left")
 
     # --- 2. POSITION Y-COORDINATES ---
-    pos_y_map = {'GKP': 33, 'DEF': 58, 'MID': 88, 'FWD': 118}
+    pos_y_map = {'GKP': 32, 'DEF': 58, 'MID': 88, 'FWD': 118}
 
-    # Helper function for high-visibility player card rendering
-    def add_player_node(x, y, player, is_bench=False):
+    def render_player(x, y, player, is_bench=False):
         is_captain = (player['id'] == captain_id) and not is_bench
         
-        # Color palette
-        bg_card = "#1a1300" if is_captain else ("#12161f" if not is_bench else "#0f1411")
-        border_col = "#FFD700" if is_captain else ("#37003c" if not is_bench else "#2e593f")
-        text_accent = "#FFD700" if is_captain else "#00FF7F"
-        node_col = "#FFD700" if is_captain else "#37003c"
+        # Color coding
+        card_bg = "#1f1800" if is_captain else "#11161d"
+        card_border = "#FFD700" if is_captain else "#2B313E"
+        pts_color = "#FFD700" if is_captain else "#00FF7F"
+        node_bg = "#FFD700" if is_captain else "#37003c"
         
-        c_badge = " <span style='color:#FFD700; font-weight:bold;'>(C)</span>" if is_captain else ""
+        capt_badge = " <b style='color:#FFD700;'>(C)</b>" if is_captain else ""
         
-        # A. Player Jersey Marker Dot
+        # 1. Jersey Node Circle
         fig.add_trace(go.Scatter(
             x=[x], y=[y],
             mode="markers+text",
             marker=dict(
                 size=22 if not is_bench else 16, 
-                color=node_col, 
-                line=dict(width=2, color=border_col)
+                color=node_bg, 
+                line=dict(width=2, color=card_border)
             ),
             text=["<b>C</b>" if is_captain else ""],
             textposition="middle center",
             textfont=dict(color="#000000" if is_captain else "#FFFFFF", size=11, family="Arial"),
             hoverinfo="text",
-            hovertext=f"{player['web_name']} - {player['xP']} pts",
+            hovertext=f"{player['web_name']} (£{player['now_cost']}m) - {player['xP']} pts",
             showlegend=False
         ))
 
-        # B. Clean, Boxed Player Data Card
-        card_html = (
-            f"<b style='font-size:11px; color:#FFFFFF;'>{player['web_name']}</b>{c_badge}<br>"
-            f"<span style='color:{text_accent}; font-weight:bold;'>{player['xP']} pts</span>"
-            f"<span style='color:#9aa0a6;'> | £{player['now_cost']}m</span>"
+        # 2. Compact, Non-Overlapping Player Card (Using Fixed Pixel Y-Shift)
+        card_text = (
+            f"<b>{player['web_name']}</b>{capt_badge}<br>"
+            f"<span style='color:{pts_color}; font-weight:bold;'>{player['xP']} pts</span>"
+            f"<span style='color:#8b949e; font-size:9px;'> | £{player['now_cost']}m</span>"
         ) if not is_bench else (
-            f"<b style='font-size:10px; color:#c1c7cd;'>{player['web_name']}</b><br>"
+            f"<b>{player['web_name']}</b><br>"
             f"<span style='color:#00FF7F;'>{player['xP']} pts</span>"
         )
 
-        offset_y = -5.8 if not is_bench else -4.2
-
         fig.add_annotation(
-            x=x, y=y + offset_y,
-            text=card_html,
+            x=x, y=y,
+            yshift=-32 if not is_bench else -24,  # Anchors card directly under circle regardless of aspect ratio
+            text=card_text,
             showarrow=False,
-            font=dict(family="Arial"),
+            font=dict(family="Arial", size=10),
             align="center",
-            bgcolor=bg_card,
-            bordercolor=border_col,
-            borderwidth=1.5,
-            borderpad=4
+            bgcolor=card_bg,
+            bordercolor=card_border,
+            borderwidth=1,
+            borderpad=3
         )
 
-    # --- 3. PLOT STARTING XI ---
+    # --- 3. RENDER STARTING XI ---
     for pos, y_val in pos_y_map.items():
         pos_players = starting_11_df[starting_11_df['position'] == pos]
         count = len(pos_players)
         
         if count > 0:
-            x_coords = [5 + (90 * (i + 1) / (count + 1)) for i in range(count)]
+            # Dynamic spacing with margin to prevent side-clipping and cards touching
+            x_coords = [8 + (84 * (i + 1) / (count + 1)) for i in range(count)]
             for idx, (_, player) in enumerate(pos_players.iterrows()):
-                add_player_node(x_coords[idx], y_val, player, is_bench=False)
+                render_player(x_coords[idx], y_val, player, is_bench=False)
 
-    # --- 4. PLOT BENCH ---
+    # --- 4. RENDER BENCH ---
     if not bench_df.empty:
-        bench_count = len(bench_df)
-        bench_x_coords = [8 + (84 * (i + 1) / (bench_count + 1)) for i in range(bench_count)]
+        b_count = len(bench_df)
+        b_x_coords = [10 + (80 * (i + 1) / (b_count + 1)) for i in range(b_count)]
         for idx, (_, player) in enumerate(bench_df.iterrows()):
-            add_player_node(bench_x_coords[idx], 7.5, player, is_bench=True)
+            render_player(b_x_coords[idx], 8, player, is_bench=True)
 
-    # --- 5. CANVAS & AXES LAYOUT ---
+    # --- 5. CANVAS SETTINGS ---
     fig.update_layout(
         xaxis=dict(range=[-2, 102], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
         yaxis=dict(
@@ -308,10 +304,10 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
             showticklabels=False, 
             fixedrange=True,
             scaleanchor="x",
-            scaleratio=1.25  # Gives proper football pitch proportions
+            scaleratio=1.28
         ),
-        height=820,
-        margin=dict(l=5, r=5, t=5, b=5),
+        height=800,
+        margin=dict(l=10, r=10, t=10, b=10),
         plot_bgcolor="#0E1117",
         paper_bgcolor="#0E1117"
     )
