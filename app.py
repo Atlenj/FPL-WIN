@@ -226,7 +226,6 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     
     fig.add_shape(type="rect", x0=4, y0=24, x1=96, y1=136, line=dict(color="#2e6345", width=2))
     
-    # FIXED: y1=80
     fig.add_shape(type="line", x0=4, y0=80, x1=96, y1=80, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=49, y0=79, x1=51, y1=81, fillcolor="#2e6345", line=dict(color="#2e6345"))
@@ -389,7 +388,9 @@ if menu == "📊 Dashboard Overview":
 
     st.markdown("#### 📊 Official FPL Metrics Breakdown")
     
+    # --- UPDATED: Added 'xP ({selected_gw})' column to table ---
     fpl_stats_table = pd.DataFrame([{
+        f"xP ({selected_gw})": p_data[selected_gw_col],
         "Official ep_next": p_data.get('ep_next', 0),
         "GS": p_data.get('goals_scored', 0),
         "A": p_data.get('assists', 0),
@@ -413,6 +414,21 @@ if menu == "📊 Dashboard Overview":
     }])
     
     st.dataframe(fpl_stats_table, use_container_width=True, hide_index=True)
+
+    # --- ADDED: Selected Player GW1 - GW10 xP Timeline ---
+    st.markdown(f"#### 🗓️ Projected Expected Points (GW1 – GW10) for {p_data['web_name']}")
+    gw_cols = [f'GW{i}_xP' for i in range(1, 11)]
+    player_gw_table = pd.DataFrame([p_data[gw_cols].to_dict()])
+    player_gw_table.columns = [f"GW{i}" for i in range(1, 11)]
+    st.dataframe(player_gw_table, use_container_width=True, hide_index=True)
+
+    # --- ADDED: Top 15 Overall Matrix (GW1 – GW10) ---
+    st.markdown("---")
+    st.subheader("📅 Top 15 Players — Expected Points Matrix (GW1 – GW10)")
+    matrix_cols = ['web_name', 'position', 'team_short', 'now_cost'] + gw_cols
+    xp_matrix = top_15[matrix_cols].copy()
+    xp_matrix.columns = ['Player', 'Pos', 'Team', 'Cost (£m)'] + [f'GW{i}' for i in range(1, 11)]
+    st.dataframe(xp_matrix, use_container_width=True, hide_index=True)
 
 # --- SQUAD & PITCH VIEW PAGE ---
 elif menu == "🛡️ My Squad & Pitch View":
