@@ -216,7 +216,7 @@ st.sidebar.markdown("---")
 manager_id_input = st.sidebar.text_input("Enter FPL Manager ID", value="475093")
 use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", value=True)
 
-# --- RE-ENGINEERED FPL PITCH VISUALIZER (NO OVERLAPS / FIXED PIXEL YSHIFT) ---
+# --- RE-ENGINEERED FPL PITCH VISUALIZER ---
 def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig = go.Figure()
 
@@ -226,7 +226,8 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     
     fig.add_shape(type="rect", x0=4, y0=24, x1=96, y1=136, line=dict(color="#2e6345", width=2))
     
-    fig.add_shape(type="line", x0=4, y0=80, x1=96, y0=80, line=dict(color="#2e6345", width=2))
+    # FIXED: y1=80
+    fig.add_shape(type="line", x0=4, y0=80, x1=96, y1=80, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=49, y0=79, x1=51, y1=81, fillcolor="#2e6345", line=dict(color="#2e6345"))
     
