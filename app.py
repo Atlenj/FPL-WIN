@@ -159,32 +159,40 @@ for f in fixtures_data:
         team_fixtures.setdefault(f['team_h'], {})[gw] = f['team_h_difficulty']
         team_fixtures.setdefault(f['team_a'], {})[gw] = f['team_a_difficulty']
 
-# --- ENHANCED UNIQUE XP MODEL (Solves Teammate Duplication) ---
+# --- ENHANCED & CALIBRATED UNIQUE XP MODEL ---
 for gw in range(1, 11):
     def calculate_gw_xp(row):
-        # 1. Minute reliability factor (Scale from 0.0 to 1.0)
-        mins_factor = min(row['avg_minutes'] / 90.0, 1.0)
+        # 1. Base anchor from FPL API
+        base_ep = row['ep_next']
         
-        # 2. Individual Attacking Threat per 90 mins (xGI per game weighted)
-        xgi_per_90 = row['expected_goal_involvements'] / row['games_played']
+        # 2. Individual Attacking Threat per 90 (xGI/90)
+        games = max(row['games_played'], 1.0)
+        xgi_per_90 = row['expected_goal_involvements'] / games
         
-        # Position multipliers for attacking threat
-        pos_weight = {'GKP': 0.1, 'DEF': 0.8, 'MID': 1.0, 'FWD': 1.2}.get(row['position'], 1.0)
-        individual_attacking_bonus = xgi_per_90 * pos_weight
-        
-        # 3. Base composite formula mixing API projection with individual metrics
-        base = (row['ep_next'] * 0.6) + (individual_attacking_bonus * 1.5)
-        
-        # If player barely plays, scale down heavily
-        if mins_factor < 0.2:
-            base *= 0.2
+        # Calculate individual delta based on position
+        pos = row['position']
+        if pos in ['MID', 'FWD']:
+            # Attacking boost based on xGI per 90
+            individual_delta = xgi_per_90 * 1.8
+        elif pos == 'DEF':
+            # Attacking defenders get xGI boost; central defenders stay closer to base
+            individual_delta = (xgi_per_90 * 1.2)
+        else:  # GKP
+            individual_delta = 0.0
 
-        # 4. Apply Team FDR Modifier
+        # 3. Minute Availability Scaling (Only scale down if player averages < 60 mins)
+        avg_mins = row['avg_minutes']
+        minute_scale = 1.0 if avg_mins >= 60 else (avg_mins / 60.0)
+
+        # 4. Combine Base + Individual Delta
+        unadjusted_xp = (base_ep + individual_delta) * minute_scale
+
+        # 5. Apply Team FDR Modifier
         team_id = row['team']
         fdr = team_fixtures.get(team_id, {}).get(gw, 3)
         fixture_modifier = 1.0 + ((3 - fdr) * 0.10)
         
-        return round(base * fixture_modifier, 2)
+        return round(max(0.0, unadjusted_xp * fixture_modifier), 2)
 
     players_df[f'GW{gw}_xP'] = players_df.apply(calculate_gw_xp, axis=1)
 
