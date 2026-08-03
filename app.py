@@ -192,10 +192,11 @@ st.sidebar.markdown("---")
 manager_id_input = st.sidebar.text_input("Enter FPL Manager ID", value="475093")
 use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", value=True)
 
-# --- PITCH GENERATOR FUNCTION ---
+# --- REVISED PITCH GENERATOR FUNCTION ---
 def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig = go.Figure()
 
+    # Pitch Background shapes
     fig.add_shape(type="rect", x0=0, y0=18, x1=100, y1=100, 
                   fillcolor="#12251a", line=dict(color="#2e593f", width=2))
     
@@ -206,6 +207,7 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig.add_shape(type="rect", x0=22, y0=21, x1=78, y1=38, line=dict(color="#458a60", width=2))
     fig.add_shape(type="rect", x0=22, y0=80, x1=78, y1=97, line=dict(color="#458a60", width=2))
 
+    # Bench shape
     fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=16, 
                   fillcolor="#0b1610", line=dict(color="#1f3829", width=2))
     fig.add_shape(type="line", x0=0, y0=16, x1=100, y1=16, line=dict(color="#2e593f", width=1, dash="dash"))
@@ -213,6 +215,7 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
 
     pos_y_map = {'GKP': 27, 'DEF': 47, 'MID': 70, 'FWD': 89}
 
+    # Plot Starting XI
     for pos, y_val in pos_y_map.items():
         pos_players = starting_11_df[starting_11_df['position'] == pos]
         count = len(pos_players)
@@ -228,43 +231,44 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
                 border_color = "#FFD700" if is_captain else "#00FF7F"
                 marker_color = "#5c4000" if is_captain else "#37003c"
 
-                card_text = (
-                    f"<b>{player['web_name']}{badge_label}</b><br>"
-                    f"<span style='font-size:11px; color:#00FF7F;'>{player['xP']} pts</span>"
-                    f" | <span style='font-size:10px; color:#B0B0B0;'>£{player['now_cost']}m</span>"
-                )
+                card_text = f"<b>{player['web_name']}{badge_label}</b><br>{player['xP']} pts | £{player['now_cost']}m"
                 
                 fig.add_trace(go.Scatter(
                     x=[x_val], y=[y_val],
                     mode="markers+text",
-                    marker=dict(size=30, color=marker_color, line=dict(width=3, color=border_color)),
-                    text=[card_text], textposition="bottom center",
-                    hoverinfo="text", showlegend=False
+                    marker=dict(size=28, color=marker_color, line=dict(width=3, color=border_color)),
+                    text=[card_text],
+                    textposition="bottom center",
+                    textfont=dict(color="#FFFFFF", size=11, family="Arial"),
+                    hoverinfo="text",
+                    showlegend=False
                 ))
 
+    # Plot Bench
     if not bench_df.empty:
         bench_count = len(bench_df)
         bench_x_coords = [10 + (80 * (i + 1) / (bench_count + 1)) for i in range(bench_count)]
         
         for idx, (_, player) in enumerate(bench_df.iterrows()):
             x_val = bench_x_coords[idx]
-            card_text = (
-                f"<b>{player['web_name']} (Sub)</b><br>"
-                f"<span style='font-size:10px; color:#00FF7F;'>{player['xP']} pts</span>"
-            )
+            card_text = f"<b>{player['web_name']}</b><br>{player['xP']} pts"
+            
             fig.add_trace(go.Scatter(
                 x=[x_val], y=[7],
                 mode="markers+text",
-                marker=dict(size=22, color="#1b2a22", line=dict(width=1.5, color="#6b8e7b")),
-                text=[card_text], textposition="bottom center",
-                hoverinfo="text", showlegend=False
+                marker=dict(size=22, color="#1b2a22", line=dict(width=2, color="#6b8e7b")),
+                text=[card_text],
+                textposition="bottom center",
+                textfont=dict(color="#8fa396", size=10, family="Arial"),
+                hoverinfo="text",
+                showlegend=False
             ))
 
     fig.update_layout(
         xaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
         yaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
         height=720,
-        margin=dict(l=5, r=5, t=5, b=5),
+        margin=dict(l=10, r=10, t=10, b=10),
         plot_bgcolor="#12251a",
         paper_bgcolor="#0E1117"
     )
