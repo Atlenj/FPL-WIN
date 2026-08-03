@@ -47,9 +47,18 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Initialize navigation state
+# Initialize navigation & persistent transfer state
 if "menu_selection" not in st.session_state:
     st.session_state.menu_selection = "📊 Dashboard Overview"
+
+if "bank_balance" not in st.session_state:
+    st.session_state.bank_balance = 1.0  # £1.0m default ITB
+
+if "custom_squad_ids" not in st.session_state:
+    st.session_state.custom_squad_ids = None
+
+if "planned_transfers" not in st.session_state:
+    st.session_state.planned_transfers = []
 
 # --- API DATA FETCHING ---
 @st.cache_data(ttl=3600)
@@ -190,13 +199,14 @@ players_df['xP'] = players_df[selected_gw_col]
 menu_options = [
     "📊 Dashboard Overview", 
     "🛡️ My Squad & Pitch View", 
+    "🔄 Transfer Planner",
     "🔍 Player Explorer & Differentials"
 ]
 
 menu = st.sidebar.radio(
     "Navigation", 
     options=menu_options,
-    index=menu_options.index(st.session_state.menu_selection),
+    index=menu_options.index(st.session_state.menu_selection) if st.session_state.menu_selection in menu_options else 0,
     key="nav_radio"
 )
 
@@ -216,7 +226,7 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     
     fig.add_shape(type="rect", x0=4, y0=24, x1=96, y1=136, line=dict(color="#2e6345", width=2))
     
-    fig.add_shape(type="line", x0=4, y0=80, x1=96, y1=80, line=dict(color="#2e6345", width=2))
+    fig.add_shape(type="line", x0=4, y0=80, x1=96, y0=80, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=49, y0=79, x1=51, y1=81, fillcolor="#2e6345", line=dict(color="#2e6345"))
     
@@ -437,6 +447,11 @@ elif menu == "🛡️ My Squad & Pitch View":
             selected_fwds = st.multiselect("FWD", options=fwds['id'].tolist(), default=fwds['id'].tolist()[:3], format_func=lambda x: fwds[fwds['id']==x]['display_label'].values[0], max_selections=3)
 
         all_selected_ids = selected_gkps + selected_defs + selected_mids + selected_fwds
+        
+        # Override with custom transfers if present
+        if st.session_state.custom_squad_ids:
+            all_selected_ids = st.session_state.custom_squad_ids
+            
         full_squad = players_df[players_df['id'].isin(all_selected_ids)].copy()
 
         if len(full_squad) >= 11:
@@ -461,12 +476,17 @@ elif menu == "🛡️ My Squad & Pitch View":
             if user_data:
                 picks = user_data.get('picks', [])
                 my_player_ids = [p['element'] for p in picks]
+                
+                if st.session_state.custom_squad_ids:
+                    my_player_ids = st.session_state.custom_squad_ids
+                    
                 my_squad_df = players_df[players_df['id'].isin(my_player_ids)].copy()
                 pick_order = {p['element']: p['position'] for p in picks}
-                my_squad_df['squad_order'] = my_squad_df['id'].map(pick_order)
+                my_squad_df['squad_order'] = my_squad_df['id'].map(pick_order).fillna(99)
+                my_squad_df = my_squad_df.sort_values(by='squad_order')
                 
-                starting_11 = my_squad_df[my_squad_df['squad_order'] <= 11]
-                bench_df = my_squad_df[my_squad_df['squad_order'] > 11]
+                starting_11 = my_squad_df.head(11)
+                bench_df = my_squad_df.tail(len(my_squad_df) - 11)
 
     if not starting_11.empty:
         captain_row = starting_11.sort_values(by='xP', ascending=False).iloc[0]
@@ -491,6 +511,143 @@ elif menu == "🛡️ My Squad & Pitch View":
         squad_breakdown = pd.concat([starting_11, bench_df])[['web_name', 'position', 'team_short', 'now_cost'] + gw_cols].copy()
         squad_breakdown.columns = ['Player', 'Pos', 'Team', 'Cost'] + [f'GW{i}' for i in range(1, 11)]
         st.dataframe(squad_breakdown, use_container_width=True)
+
+# --- TRANSFER PLANNER PAGE ---
+elif menu == "🔄 Transfer Planner":
+    st.title("🔄 FPL Transfer & Financial Planner")
+    st.caption("Plan transfers, evaluate point projections, monitor remaining budget, and compare fixture schedules.")
+
+    # 1. Determine active current squad IDs
+    current_squad_ids = []
+    if st.session_state.custom_squad_ids:
+        current_squad_ids = st.session_state.custom_squad_ids
+    elif use_manual_picker:
+        gkps = players_df[players_df['position'] == 'GKP']['id'].tolist()[:2]
+        defs = players_df[players_df['position'] == 'DEF']['id'].tolist()[:5]
+        mids = players_df[players_df['position'] == 'MID']['id'].tolist()[:5]
+        fwds = players_df[players_df['position'] == 'FWD']['id'].tolist()[:3]
+        current_squad_ids = gkps + defs + mids + fwds
+    elif manager_id_input:
+        user_data = fetch_user_squad(manager_id_input, current_gw)
+        if user_data:
+            current_squad_ids = [p['element'] for p in user_data.get('picks', [])]
+
+    if not current_squad_ids or len(current_squad_ids) < 15:
+        st.warning("⚠️ Active squad incomplete. Please select a full 15-player squad in 'My Squad & Pitch View' first.")
+        st.stop()
+
+    active_squad_df = players_df[players_df['id'].isin(current_squad_ids)].copy()
+    
+    # 2. Financial & Planner Summary Bar
+    total_squad_val = round(active_squad_df['now_cost'].sum(), 1)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Current Squad Value", f"£{total_squad_val:.1f}m")
+    
+    # Allow manual override for In The Bank balance
+    st.session_state.bank_balance = col2.number_input("In The Bank (£m)", min_value=0.0, max_value=25.0, value=float(st.session_state.bank_balance), step=0.1)
+    
+    free_transfers = col3.number_input("Free Transfers Available", min_value=1, max_value=5, value=1, step=1)
+    
+    total_budget = round(total_squad_val + st.session_state.bank_balance, 1)
+    col4.metric("Total Budget Available", f"£{total_budget:.1f}m")
+
+    st.markdown("---")
+
+    # 3. Interactive Transfer Evaluator
+    st.subheader("🔁 Evaluate Potential Transfer")
+    
+    p_col1, p_col2 = st.columns(2)
+    
+    with p_col1:
+        st.markdown("#### ❌ Player Out (Current Squad)")
+        player_out_id = st.selectbox(
+            "Select player to sell:",
+            options=active_squad_df['id'].tolist(),
+            format_func=lambda x: active_squad_df[active_squad_df['id'] == x]['display_label'].values[0]
+        )
+        p_out = active_squad_df[active_squad_df['id'] == player_out_id].iloc[0]
+
+    with p_col2:
+        st.markdown("#### 🔄 Player In (Target Replacement)")
+        # Filter potential targets by same position and budget constraints
+        eligible_targets = players_df[
+            (players_df['position'] == p_out['position']) & 
+            (~players_df['id'].isin(current_squad_ids)) &
+            (players_df['now_cost'] <= round(p_out['now_cost'] + st.session_state.bank_balance, 1))
+        ].sort_values(by=selected_gw_col, ascending=False)
+        
+        if eligible_targets.empty:
+            st.error("No eligible players found within your remaining budget!")
+            player_in_id = None
+            p_in = None
+        else:
+            player_in_id = st.selectbox(
+                "Select target replacement:",
+                options=eligible_targets['id'].tolist(),
+                format_func=lambda x: eligible_targets[eligible_targets['id'] == x]['display_label'].values[0]
+            )
+            p_in = eligible_targets[eligible_targets['id'] == player_in_id].iloc[0]
+
+    # Display comparison metrics if selection valid
+    if p_out is not None and p_in is not None:
+        cost_diff = round(p_in['now_cost'] - p_out['now_cost'], 1)
+        xp_out_single = p_out[selected_gw_col]
+        xp_in_single = p_in[selected_gw_col]
+        xp_diff_single = round(xp_in_single - xp_out_single, 2)
+        
+        # Calculate 5-GW Projected Impact
+        target_gw_num = int(selected_gw.replace("GW", ""))
+        horizon_gws = [f"GW{i}_xP" for i in range(target_gw_num, min(11, target_gw_num + 5))]
+        
+        cum_xp_out = sum([p_out[col] for col in horizon_gws])
+        cum_xp_in = sum([p_in[col] for col in horizon_gws])
+        cum_xp_diff = round(cum_xp_in - cum_xp_out, 2)
+
+        st.markdown("### 📊 Direct Comparison")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Cost Change", f"£{cost_diff:+.1f}m", delta=f"{'Save' if cost_diff < 0 else 'Cost'} £{abs(cost_diff):.1f}m", delta_color="inverse")
+        m2.metric(f"Active ({selected_gw}) xP Gain", f"{xp_diff_single:+.2f} pts", delta=f"{xp_diff_single:+.2f} pts")
+        m3.metric(f"{len(horizon_gws)}-GW Cumulative xP Gain", f"{cum_xp_diff:+.2f} pts", delta=f"{cum_xp_diff:+.2f} pts")
+        
+        rem_bank = round(st.session_state.bank_balance - cost_diff, 1)
+        m4.metric("Remaining Bank After Transfer", f"£{rem_bank:.1f}m")
+
+        # Fixture Difficulty Visual Comparison
+        st.markdown("#### 🗓️ Upcoming Fixture Difficulty (FDR) Comparison")
+        
+        fdr_colors = {1: "🟩 #00FF7F", 2: "🟢 #00BFFF", 3: "⚪ #FFFFFF", 4: "🟠 #FF8C00", 5: "🔴 #FF4500"}
+        
+        fix_cols = st.columns(len(horizon_gws) + 1)
+        fix_cols[0].markdown("**Player**")
+        for i, gw_name in enumerate(horizon_gws):
+            fix_cols[i + 1].markdown(f"**{gw_name.replace('_xP', '')}**")
+
+        # Player Out Fixtures
+        fix_cols[0].write(f"🔴 **{p_out['web_name']}**")
+        for i, gw_name in enumerate(horizon_gws):
+            gw_num = int(gw_name.replace("GW", "").replace("_xP", ""))
+            fdr = team_fixtures.get(p_out['team'], {}).get(gw_num, 3)
+            color_badge = fdr_colors.get(fdr, "⚪ #FFFFFF")
+            fix_cols[i + 1].markdown(f"<span style='color:{color_badge.split(' ')[1]}; font-weight:bold;'>FDR {fdr}</span>", unsafe_allow_html=True)
+
+        # Player In Fixtures
+        fix_cols[0].write(f"🟢 **{p_in['web_name']}**")
+        for i, gw_name in enumerate(horizon_gws):
+            gw_num = int(gw_name.replace("GW", "").replace("_xP", ""))
+            fdr = team_fixtures.get(p_in['team'], {}).get(gw_num, 3)
+            color_badge = fdr_colors.get(fdr, "⚪ #FFFFFF")
+            fix_cols[i + 1].markdown(f"<span style='color:{color_badge.split(' ')[1]}; font-weight:bold;'>FDR {fdr}</span>", unsafe_allow_html=True)
+
+        st.markdown("---")
+        
+        # Apply transfer action
+        if st.button("➕ Stage & Apply Transfer to Active Squad", type="primary"):
+            new_squad_ids = [pid for pid in current_squad_ids if pid != player_out_id] + [player_in_id]
+            st.session_state.custom_squad_ids = new_squad_ids
+            st.session_state.bank_balance = rem_bank
+            st.success(f"✅ Transfer Applied! Sold {p_out['web_name']}, bought {p_in['web_name']}.")
+            st.rerun()
 
 # --- PLAYER EXPLORER PAGE ---
 elif menu == "🔍 Player Explorer & Differentials":
