@@ -181,14 +181,10 @@ for f in fixtures_data:
 # --- ENHANCED & CALIBRATED UNIQUE XP MODEL WITH UPDATED FDR ---
 for gw in range(1, 11):
     def calculate_gw_xp(row, target_gw=gw):
-        # 1. Base anchor from FPL API
         base_ep = row['ep_next']
-        
-        # 2. Individual Attacking Threat per 90 (xGI/90)
         games = max(row['games_played'], 1.0)
         xgi_per_90 = row['expected_goal_involvements'] / games
         
-        # Calculate individual delta based on position
         pos = row['position']
         if pos in ['MID', 'FWD']:
             individual_delta = xgi_per_90 * 1.8
@@ -197,14 +193,11 @@ for gw in range(1, 11):
         else:  # GKP
             individual_delta = 0.0
 
-        # 3. Minute Availability Scaling
         avg_mins = row['avg_minutes']
         minute_scale = 1.0 if avg_mins >= 60 else (avg_mins / 60.0)
 
-        # 4. Combine Base + Individual Delta
         unadjusted_xp = (base_ep + individual_delta) * minute_scale
 
-        # 5. Apply Refined Team FDR Modifier (10% adjustment per difficulty point away from neutral 3)
         team_id = row['team']
         fdr = team_fixtures.get(team_id, {}).get(target_gw, 3)
         fixture_modifier = 1.0 + ((3 - fdr) * 0.10)
@@ -256,21 +249,15 @@ use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", valu
 def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig = go.Figure()
 
-    # --- 1. PITCH GEOMETRY & BACKGROUND ---
     fig.add_shape(type="rect", x0=0, y0=20, x1=100, y1=140, 
                   fillcolor="#0a1a12", line=dict(color="#1f422e", width=2))
     
     fig.add_shape(type="rect", x0=4, y0=24, x1=96, y1=136, line=dict(color="#2e6345", width=2))
-    
-    # Halfway line
     fig.add_shape(type="line", x0=4, y0=80, x1=96, y1=80, line=dict(color="#2e6345", width=2))
-    
     fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=49, y0=79, x1=51, y1=81, fillcolor="#2e6345", line=dict(color="#2e6345"))
-    
     fig.add_shape(type="rect", x0=22, y0=24, x1=78, y1=45, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="rect", x0=36, y0=24, x1=64, y1=31, line=dict(color="#2e6345", width=2))
-    
     fig.add_shape(type="rect", x0=22, y0=115, x1=78, y1=136, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="rect", x0=36, y0=129, x1=64, y1=136, line=dict(color="#2e6345", width=2))
 
@@ -279,7 +266,6 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig.add_annotation(x=4, y=15.5, text="<b>SUBSTITUTES BENCH</b>", showarrow=False, 
                        font=dict(color="#5a826b", size=10, family="Arial"), xanchor="left")
 
-    # --- 2. POSITION Y-COORDINATES ---
     pos_y_map = {'GKP': 32, 'DEF': 58, 'MID': 88, 'FWD': 118}
 
     def render_player(x, y, player, is_bench=False):
@@ -292,7 +278,6 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
         
         capt_badge = " <b style='color:#FFD700;'>(C)</b>" if is_captain else ""
         
-        # Jersey Node Circle
         fig.add_trace(go.Scatter(
             x=[x], y=[y],
             mode="markers+text",
@@ -309,7 +294,6 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
             showlegend=False
         ))
 
-        # Compact Player Card
         card_text = (
             f"<b>{player['web_name']}</b>{capt_badge}<br>"
             f"<span style='color:{pts_color}; font-weight:bold;'>{player['xP']} pts</span>"
@@ -332,7 +316,6 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
             borderpad=3
         )
 
-    # --- 3. RENDER STARTING XI ---
     for pos, y_val in pos_y_map.items():
         pos_players = starting_11_df[starting_11_df['position'] == pos]
         count = len(pos_players)
@@ -342,14 +325,12 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
             for idx, (_, player) in enumerate(pos_players.iterrows()):
                 render_player(x_coords[idx], y_val, player, is_bench=False)
 
-    # --- 4. RENDER BENCH ---
     if not bench_df.empty:
         b_count = len(bench_df)
         b_x_coords = [10 + (80 * (i + 1) / (b_count + 1)) for i in range(b_count)]
         for idx, (_, player) in enumerate(bench_df.iterrows()):
             render_player(b_x_coords[idx], 8, player, is_bench=True)
 
-    # --- 5. CANVAS SETTINGS ---
     fig.update_layout(
         xaxis=dict(range=[-2, 102], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
         yaxis=dict(
@@ -750,7 +731,7 @@ elif menu == "🔄 Transfer Planner":
             st.success(f"✅ Transfer Applied! Sold {p_out['web_name']}, bought {p_in['web_name']}.")
             st.rerun()
 
-# --- PLAYER EXPLORER PAGE ---
+# --- PLAYER EXPLORER PAGE (COLOR GRADIENT ENHANCED) ---
 elif menu == "🔍 Player Explorer & Differentials":
     st.title("🔍 Player Explorer & Differential Finder")
     st.caption("Search for any player in Premier League, filter position/ownership, and inspect expected points columns from GW1 to GW10.")
@@ -789,7 +770,7 @@ elif menu == "🔍 Player Explorer & Differentials":
     if pos_filter != "All":
         explorer_df = explorer_df[explorer_df['position'] == pos_filter]
 
-    # 4. Format Column Names & Render Table
+    # 4. Format Column Names
     rename_dict = {
         'web_name': 'Player',
         'team_short': 'Team',
@@ -810,4 +791,16 @@ elif menu == "🔍 Player Explorer & Differentials":
     explorer_df = explorer_df.rename(columns=rename_dict)
     explorer_df = explorer_df.sort_values(by=f'Target ({selected_gw}) xP', ascending=False)
     
-    st.dataframe(explorer_df, use_container_width=True, hide_index=True)
+    # 5. Apply Background Color Gradient to Numeric xP/GW Columns via Pandas Styler
+    target_xp_col_name = f'Target ({selected_gw}) xP'
+    gw_col_names = [c.replace('_xP', '') for c in gw_cols if c != selected_gw_col]
+    numeric_xp_subset = [target_xp_col_name] + gw_col_names
+
+    styled_df = explorer_df.style.background_gradient(
+        cmap="YlGn",                  # High visual contrast: Yellow -> Bright Green
+        subset=numeric_xp_subset,
+        low=0.2, 
+        high=0.85
+    ).format("{:.2f}", subset=numeric_xp_subset)
+
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
