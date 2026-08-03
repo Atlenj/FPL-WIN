@@ -29,14 +29,19 @@ st.markdown("""
         background-color: #161922;
         border-right: 1px solid #2B313E;
     }
-    /* Style header button to look like a clean title heading */
+    /* Style sidebar header button to look like a prominent large title */
     div[data-testid="stSidebar"] button[kind="tertiary"] {
-        font-size: 24px !important;
-        font-weight: 800 !important;
+        font-size: 32px !important;
+        font-weight: 900 !important;
         color: #00FF7F !important;
-        padding: 0px !important;
+        padding: 5px 0px !important;
         text-align: left !important;
         justify-content: flex-start !important;
+        letter-spacing: -0.5px !important;
+    }
+    div[data-testid="stSidebar"] button[kind="tertiary"] p {
+        font-size: 32px !important;
+        font-weight: 900 !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -313,7 +318,7 @@ if menu == "📊 Dashboard Overview":
     
     st.markdown(f"### 📋 {p_data['web_name']} ({p_data['team_name']}) — Performance Stats")
     
-    # 1. Summary Header
+    # Summary Metrics
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Position", p_data['position'])
     c2.metric("Cost", f"£{p_data['now_cost']}m")
@@ -323,7 +328,7 @@ if menu == "📊 Dashboard Overview":
 
     st.markdown("#### 📊 Official FPL Metrics Breakdown")
     
-    # 2. Granular FPL Stats Table
+    # Granular FPL Stats Table
     fpl_stats_table = pd.DataFrame([{
         "GS": p_data.get('goals_scored', 0),
         "A": p_data.get('assists', 0),
