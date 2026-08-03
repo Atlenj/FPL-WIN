@@ -655,46 +655,92 @@ elif menu == "🔄 Transfer Planner":
         rem_bank = round(st.session_state.bank_balance - cost_diff, 1)
         m4.metric("Remaining Bank After Transfer", f"£{rem_bank:.1f}m")
 
-        # --- ENHANCED FDR FIXTURE LOOKUP & VISUAL DISPLAY ---
+        # --- ENHANCED FDR FIXTURE LOOKUP & VISUAL DISPLAY WITH COLORS ---
         st.markdown("#### 🗓️ Upcoming Fixture Difficulty (FDR) Comparison")
-        fdr_colors = {1: "#00FF7F", 2: "#00BFFF", 3: "#FFFFFF", 4: "#FF8C00", 5: "#FF4500"}
         
-        fix_cols = st.columns(len(horizon_gws) + 1)
-        fix_cols[0].markdown("**Player**")
-        for i, gw_name in enumerate(horizon_gws):
-            fix_cols[i + 1].markdown(f"**{gw_name.replace('_xP', '')}**")
+        fdr_hex_colors = {
+            1: "#00FF7F",  # Very Easy - Bright Green
+            2: "#00BFFF",  # Easy - Light Blue
+            3: "#E0E0E0",  # Medium - Light Gray
+            4: "#FF8C00",  # Hard - Orange
+            5: "#FF4500"   # Very Hard - Bright Red
+        }
+        
+        fdr_text_colors = {
+            1: "#000000",
+            2: "#000000",
+            3: "#000000",
+            4: "#FFFFFF",
+            5: "#FFFFFF"
+        }
 
-        fix_cols[0].write(f"🔴 **{p_out['web_name']}**")
-        for i, gw_name in enumerate(horizon_gws):
+        st.caption("🟢 FDR 1 (Very Easy) | 🔵 FDR 2 (Easy) | ⚪ FDR 3 (Neutral) | 🟠 FDR 4 (Hard) | 🔴 FDR 5 (Very Hard)")
+
+        # Render Player Out Fixtures
+        st.markdown(f"**🔴 Selling: {p_out['web_name']} ({p_out['team_short']})**")
+        out_cols = st.columns(len(horizon_gws))
+        
+        for idx, gw_name in enumerate(horizon_gws):
             gw_num = int(gw_name.replace("GW", "").replace("_xP", ""))
             fix_meta = team_fixture_details.get(p_out['team'], {}).get(gw_num, {'opponent': 'BYE', 'venue': '', 'fdr': 3})
             fdr = fix_meta['fdr']
-            hex_color = fdr_colors.get(fdr, "#FFFFFF")
+            hex_color = fdr_hex_colors.get(fdr, "#E0E0E0")
+            txt_color = fdr_text_colors.get(fdr, "#000000")
             
             label = f"{fix_meta['opponent']} ({fix_meta['venue']})" if fix_meta['opponent'] != 'BYE' else 'BYE'
-            fix_cols[i + 1].markdown(
-                f"<div style='line-height:1.2;'>"
-                f"<b>{label}</b><br>"
-                f"<span style='color:{hex_color}; font-weight:bold; font-size:12px;'>FDR {fdr}</span>"
-                f"</div>", 
-                unsafe_allow_html=True
-            )
+            
+            with out_cols[idx]:
+                st.markdown(
+                    f"""
+                    <div style="
+                        background-color: {hex_color};
+                        color: {txt_color};
+                        padding: 8px;
+                        border-radius: 8px;
+                        text-align: center;
+                        font-weight: bold;
+                        margin-bottom: 5px;
+                    ">
+                        <div style="font-size: 11px; opacity: 0.8;">GW{gw_num}</div>
+                        <div style="font-size: 14px;">{label}</div>
+                        <div style="font-size: 10px; margin-top: 2px;">FDR {fdr}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
-        fix_cols[0].write(f"🟢 **{p_in['web_name']}**")
-        for i, gw_name in enumerate(horizon_gws):
+        # Render Player In Fixtures
+        st.markdown(f"**🟢 Buying: {p_in['web_name']} ({p_in['team_short']})**")
+        in_cols = st.columns(len(horizon_gws))
+        
+        for idx, gw_name in enumerate(horizon_gws):
             gw_num = int(gw_name.replace("GW", "").replace("_xP", ""))
             fix_meta = team_fixture_details.get(p_in['team'], {}).get(gw_num, {'opponent': 'BYE', 'venue': '', 'fdr': 3})
             fdr = fix_meta['fdr']
-            hex_color = fdr_colors.get(fdr, "#FFFFFF")
+            hex_color = fdr_hex_colors.get(fdr, "#E0E0E0")
+            txt_color = fdr_text_colors.get(fdr, "#000000")
             
             label = f"{fix_meta['opponent']} ({fix_meta['venue']})" if fix_meta['opponent'] != 'BYE' else 'BYE'
-            fix_cols[i + 1].markdown(
-                f"<div style='line-height:1.2;'>"
-                f"<b>{label}</b><br>"
-                f"<span style='color:{hex_color}; font-weight:bold; font-size:12px;'>FDR {fdr}</span>"
-                f"</div>", 
-                unsafe_allow_html=True
-            )
+            
+            with in_cols[idx]:
+                st.markdown(
+                    f"""
+                    <div style="
+                        background-color: {hex_color};
+                        color: {txt_color};
+                        padding: 8px;
+                        border-radius: 8px;
+                        text-align: center;
+                        font-weight: bold;
+                        margin-bottom: 5px;
+                    ">
+                        <div style="font-size: 11px; opacity: 0.8;">GW{gw_num}</div>
+                        <div style="font-size: 14px;">{label}</div>
+                        <div style="font-size: 10px; margin-top: 2px;">FDR {fdr}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
         st.markdown("---")
         if st.button("➕ Stage & Apply Transfer to Active Squad", type="primary"):
