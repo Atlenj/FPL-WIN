@@ -101,31 +101,34 @@ players_df['position'] = players_df['element_type'].map(pos_map)
 players_df['now_cost'] = players_df['now_cost'] / 10.0
 players_df['selected_by_percent'] = pd.to_numeric(players_df['selected_by_percent'], errors='coerce').fillna(0.0)
 
-# --- REFINED XP FORMULA WITH MINUTES & XG/XA CROSS-CHECK ---
+# --- REFINED XP FORMULA WITH PER-GAME XG/XA & MINUTES WEIGHTING ---
 players_df['form'] = pd.to_numeric(players_df['form'], errors='coerce').fillna(0)
 players_df['points_per_game'] = pd.to_numeric(players_df['points_per_game'], errors='coerce').fillna(0)
 players_df['chance_of_playing_next_round'] = players_df['chance_of_playing_next_round'].fillna(100) / 100.0
-
-# Extract expected goals (xG) and expected assists (xA)
-players_df['expected_goals'] = pd.to_numeric(players_df.get('expected_goals', 0), errors='coerce').fillna(0)
-players_df['expected_assists'] = pd.to_numeric(players_df.get('expected_assists', 0), errors='coerce').fillna(0)
 
 # 1. Calculate realistic minutes fraction to filter fringe / low-minute players
 players_df['minutes'] = pd.to_numeric(players_df['minutes'], errors='coerce').fillna(0)
 players_df['games_played'] = (players_df['minutes'] / 90.0).clip(lower=1.0)
 players_df['avg_minutes'] = players_df['minutes'] / players_df['games_played']
 
-# Minutes factor: players averaging < 60 mins get penalized proportionally
+# Minutes factor: scale down players averaging under 60 mins
 minutes_factor = (players_df['avg_minutes'] / 90.0).clip(upper=1.0)
 
-# 2. Underlying threat factor based on position & xG/xA
-xg_xa_threat = (players_df['expected_goals'] * 4.0) + (players_df['expected_assists'] * 3.0)
+# 2. Extract xG / xA and convert from SEASON TOTALS to PER-GAME AVERAGES
+players_df['expected_goals'] = pd.to_numeric(players_df.get('expected_goals', 0), errors='coerce').fillna(0)
+players_df['expected_assists'] = pd.to_numeric(players_df.get('expected_assists', 0), errors='coerce').fillna(0)
 
-# Combine into base expected points
+players_df['xg_per_game'] = players_df['expected_goals'] / players_df['games_played']
+players_df['xa_per_game'] = players_df['expected_assists'] / players_df['games_played']
+
+# Per-game threat from xG (4 pts per goal) and xA (3 pts per assist)
+xg_xa_threat_per_game = (players_df['xg_per_game'] * 4.0) + (players_df['xa_per_game'] * 3.0)
+
+# 3. Balanced Single Gameweek xP Formula
 base_xp = (
     (players_df['form'] * 0.35) + 
     (players_df['points_per_game'] * 0.35) + 
-    (xg_xa_threat * 0.15) + 
+    (xg_xa_threat_per_game * 0.20) + 
     (players_df['chance_of_playing_next_round'] * 0.5)
 ) * minutes_factor
 
