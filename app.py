@@ -146,7 +146,7 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig.add_shape(type="rect", x0=0, y0=18, x1=100, y1=100, 
                   fillcolor="#12251a", line=dict(color="#2e593f", width=2))
     
-    # Pitch Markings (Starting XI area)
+    # Pitch Markings
     fig.add_shape(type="rect", x0=3, y0=21, x1=97, y1=97, line=dict(color="#458a60", width=2))
     fig.add_shape(type="line", x0=3, y0=59, x1=97, y1=59, line=dict(color="#458a60", width=2))
     fig.add_shape(type="circle", x0=38, y0=49, x1=62, y1=69, line=dict(color="#458a60", width=2))
@@ -158,8 +158,6 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=16, 
                   fillcolor="#0b1610", line=dict(color="#1f3829", width=2))
     fig.add_shape(type="line", x0=0, y0=16, x1=100, y1=16, line=dict(color="#2e593f", width=1, dash="dash"))
-
-    # Bench label annotation
     fig.add_annotation(x=5, y=14, text="<b>SUBSTITUTES BENCH</b>", showarrow=False, font=dict(color="#8fa396", size=10), xanchor="left")
 
     # Starting XI Y-coordinates
@@ -195,7 +193,7 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
                     hoverinfo="text", showlegend=False
                 ))
 
-    # Render Substitutes Bench (Fixed row at y = 7)
+    # Render Substitutes Bench
     if not bench_df.empty:
         bench_count = len(bench_df)
         bench_x_coords = [10 + (80 * (i + 1) / (bench_count + 1)) for i in range(bench_count)]
@@ -234,32 +232,69 @@ st.sidebar.markdown("---")
 manager_id_input = st.sidebar.text_input("Enter FPL Manager ID", value="475093")
 use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", value=True, help="Check to manually select squad before GW1!")
 
+# --- DASHBOARD OVERVIEW PAGE ---
 if menu == "📊 Dashboard Overview":
     st.title(f"📊 FPL Dashboard & Insights ({selected_gw})")
 
-    col1, col2, col3, col4 = st.columns(4)
-    top_overall = players_df.sort_values(by='xP', ascending=False).iloc[0]
-    top_mid = players_df[players_df['position'] == 'MID'].sort_values(by='xP', ascending=False).iloc[0]
+    # 1. POSITION TEXT/METRIC BOXES FOR EACH POSITION
+    col_gkp, col_def, col_mid, col_fwd = st.columns(4)
+    
+    top_gkp = players_df[players_df['position'] == 'GKP'].sort_values(by='xP', ascending=False).iloc[0]
     top_def = players_df[players_df['position'] == 'DEF'].sort_values(by='xP', ascending=False).iloc[0]
-    top_diff = players_df[players_df['selected_by_percent'] < 10.0].sort_values(by='xP', ascending=False).iloc[0]
+    top_mid = players_df[players_df['position'] == 'MID'].sort_values(by='xP', ascending=False).iloc[0]
+    top_fwd = players_df[players_df['position'] == 'FWD'].sort_values(by='xP', ascending=False).iloc[0]
 
-    col1.metric(f"👑 Top Captain Pick", top_overall['web_name'], f"{top_overall['xP']} pts")
-    col2.metric("Top Midfielder", top_mid['web_name'], f"{top_mid['xP']} pts")
-    col3.metric("Top Defender", top_def['web_name'], f"{top_def['xP']} pts")
-    col4.metric("🌟 Top Differential (<10%)", top_diff['web_name'], f"{top_diff['selected_by_percent']}% owned")
+    col_gkp.metric("🧤 Top Goalkeeper", top_gkp['web_name'], f"{top_gkp['xP']} pts")
+    col_def.metric("🛡️ Top Defender", top_def['web_name'], f"{top_def['xP']} pts")
+    col_mid.metric("⚙️ Top Midfielder", top_mid['web_name'], f"{top_mid['xP']} pts")
+    col_fwd.metric("🎯 Top Forward", top_fwd['web_name'], f"{top_fwd['xP']} pts")
 
     st.markdown("---")
     st.subheader(f"🚀 Top 15 Projected Scorers for {selected_gw}")
-    top_15 = players_df.sort_values(by='xP', ascending=False).head(15)
+    st.caption("👇 Select a player from the dropdown below or click a bar in the chart to inspect their expected stats!")
 
+    top_15 = players_df.sort_values(by='xP', ascending=False).head(15).copy()
+
+    # 2. INTERACTIVE PLOTLY BAR CHART
     fig = px.bar(
         top_15, x='web_name', y='xP', color='position', text='xP', template='plotly_dark',
+        hover_data=['team_name', 'now_cost', 'selected_by_percent', 'form'],
         color_discrete_map={'GKP': '#FFD700', 'DEF': '#00BFFF', 'MID': '#00FF7F', 'FWD': '#FF4500'}
     )
     fig.update_traces(texttemplate='%{text}', textposition='outside')
     fig.update_layout(xaxis_title="Player", yaxis_title=f"Expected Points in {selected_gw}", height=450)
-    st.plotly_chart(fig, use_container_width=True)
+    
+    # Render chart with interactive click-selection active
+    chart_selection = st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode="points")
 
+    # 3. INTERACTIVE STATS CARD ON CLICK / SELECT
+    selected_player_name = None
+    
+    if chart_selection and "selection" in chart_selection and chart_selection["selection"]["points"]:
+        point_data = chart_selection["selection"]["points"][0]
+        selected_player_name = point_data.get("x")
+        
+    col_select, _ = st.columns([1, 2])
+    with col_select:
+        chosen_player = st.selectbox(
+            "🔍 Inspect Player Expected Stats:",
+            options=top_15['web_name'].tolist(),
+            index=top_15['web_name'].tolist().index(selected_player_name) if selected_player_name in top_15['web_name'].tolist() else 0
+        )
+
+    # Detailed Player Info Card Display
+    p_data = players_df[players_df['web_name'] == chosen_player].iloc[0]
+    
+    st.markdown(f"### 📋 {p_data['web_name']} ({p_data['team_name']}) — Detailed Projections")
+    
+    p_col1, p_col2, p_col3, p_col4, p_col5 = st.columns(5)
+    p_col1.metric("Position", p_data['position'])
+    p_col2.metric("Cost", f"£{p_data['now_cost']}m")
+    p_col3.metric(f"Projected xP ({selected_gw})", f"{p_data['xP']} pts")
+    p_col4.metric("Recent Form", p_data['form'])
+    p_col5.metric("Ownership", f"{p_data['selected_by_percent']}%")
+
+# --- SQUAD & PITCH VIEW PAGE ---
 elif menu == "🛡️ My Squad & Pitch View":
     st.title("🛡️ My Squad, Bench & Pitch View")
 
@@ -295,15 +330,12 @@ elif menu == "🛡️ My Squad & Pitch View":
         all_selected_ids = selected_gkps + selected_defs + selected_mids + selected_fwds
         full_squad = players_df[players_df['id'].isin(all_selected_ids)].copy()
 
-        # Separate Starting XI vs Bench automatically by highest xP per position if full squad selected
         if len(full_squad) >= 11:
-            # Sort positions by xP to pick optimal 11
             gkp_sorted = full_squad[full_squad['position'] == 'GKP'].sort_values(by='xP', ascending=False)
             def_sorted = full_squad[full_squad['position'] == 'DEF'].sort_values(by='xP', ascending=False)
             mid_sorted = full_squad[full_squad['position'] == 'MID'].sort_values(by='xP', ascending=False)
             fwd_sorted = full_squad[full_squad['position'] == 'FWD'].sort_values(by='xP', ascending=False)
 
-            # Pick starting 1:1 GKP, 4 DEF, 4 MID, 2 FWD (Classic 4-4-2 or similar based on counts)
             n_def = min(4, len(def_sorted))
             n_mid = min(4, len(mid_sorted))
             n_fwd = min(2, len(fwd_sorted))
@@ -316,7 +348,7 @@ elif menu == "🛡️ My Squad & Pitch View":
             starting_11 = pd.concat([starting_gkp, starting_def, starting_mid, starting_fwd])
             bench_df = full_squad[~full_squad['id'].isin(starting_11['id'])]
         else:
-            starting_11 = full_skwad = full_squad
+            starting_11 = full_squad
 
     else:
         if not manager_id_input:
@@ -336,11 +368,10 @@ elif menu == "🛡️ My Squad & Pitch View":
                 bench_df = my_squad_df[my_squad_df['squad_order'] > 11]
 
     if not starting_11.empty:
-        # Determine Captain (Highest xP in Starting XI)
         captain_row = starting_11.sort_values(by='xP', ascending=False).iloc[0]
         captain_id = captain_row['id']
         
-        total_xp = (starting_11['xP'].sum() + captain_row['xP']).round(2)  # Captain doubles points
+        total_xp = (starting_11['xP'].sum() + captain_row['xP']).round(2)
         total_cost = (starting_11['now_cost'].sum() + (bench_df['now_cost'].sum() if not bench_df.empty else 0)).round(1)
         
         m_col1, m_col2, m_col3, m_col4 = st.columns(4)
@@ -360,6 +391,7 @@ elif menu == "🛡️ My Squad & Pitch View":
         squad_breakdown.columns = ['Player', 'Pos', 'Team', 'Cost'] + [f'GW{i}' for i in range(1, 11)]
         st.dataframe(squad_breakdown, use_container_width=True)
 
+# --- PLAYER EXPLORER PAGE ---
 elif menu == "🔍 Player Explorer & Differentials":
     st.title("🔍 Player Explorer & Differential Finder")
     st.markdown("*(Filter for low-ownership hidden gems and compare projected points)*")
