@@ -121,46 +121,85 @@ players_df['xP'] = (
 # Add display label for select boxes
 players_df['display_label'] = players_df['web_name'] + " (" + players_df['team_name'] + ") - £" + players_df['now_cost'].astype(str) + "m"
 
-# --- PITCH GENERATOR FUNCTION ---
+# --- ENHANCED PITCH GENERATOR FUNCTION ---
 def generate_fpl_pitch(starting_11_df):
     fig = go.Figure()
 
-    # Green pitch rectangle
-    fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=100, fillcolor="#008a4b", line=dict(color="white", width=2))
-    fig.add_shape(type="line", x0=0, y0=50, x1=100, y1=50, line=dict(color="white", width=2))
-    fig.add_shape(type="circle", x0=35, y0=35, x1=65, y1=65, line=dict(color="white", width=2))
-    fig.add_shape(type="rect", x0=20, y0=0, x1=80, y1=15, line=dict(color="white", width=2))
-    fig.add_shape(type="rect", x0=20, y0=85, x1=80, y1=100, line=dict(color="white", width=2))
+    # Pitch surface (Dark tactical green gradient tone)
+    fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=100, 
+                  fillcolor="#12251a", line=dict(color="#2e593f", width=2))
+    
+    # Outer pitch boundary line
+    fig.add_shape(type="rect", x0=3, y0=3, x1=97, y1=97, 
+                  line=dict(color="#458a60", width=2))
 
-    pos_y_map = {'GKP': 8, 'DEF': 32, 'MID': 60, 'FWD': 88}
+    # Halfway line
+    fig.add_shape(type="line", x0=3, y0=50, x1=97, y1=50, 
+                  line=dict(color="#458a60", width=2))
 
+    # Center circle & spot
+    fig.add_shape(type="circle", x0=38, y0=40, x1=62, y1=60, 
+                  line=dict(color="#458a60", width=2))
+    fig.add_shape(type="circle", x0=49.2, y0=49.2, x1=50.8, y1=50.8, 
+                  fillcolor="#458a60", line=dict(color="#458a60"))
+
+    # Penalty box (Bottom - GK area)
+    fig.add_shape(type="rect", x0=22, y0=3, x1=78, y1=20, 
+                  line=dict(color="#458a60", width=2))
+    fig.add_shape(type="rect", x0=36, y0=3, x1=64, y1=9, 
+                  line=dict(color="#458a60", width=1.5))
+
+    # Penalty box (Top - Opponent area)
+    fig.add_shape(type="rect", x0=22, y0=80, x1=78, y1=97, 
+                  line=dict(color="#458a60", width=2))
+    fig.add_shape(type="rect", x0=36, y0=91, x1=64, y1=97, 
+                  line=dict(color="#458a60", width=1.5))
+
+    # Dynamic Position Y-coordinates (realistic tactical heights)
+    pos_y_map = {'GKP': 11, 'DEF': 32, 'MID': 60, 'FWD': 84}
+
+    # Map positions and add player nodes
     for pos, y_val in pos_y_map.items():
         pos_players = starting_11_df[starting_11_df['position'] == pos]
         count = len(pos_players)
         
         if count > 0:
-            x_coords = [100 * (i + 1) / (count + 1) for i in range(count)]
+            # Calculate even horizontal spacing across pitch width (3 to 97 range)
+            x_coords = [3 + (94 * (i + 1) / (count + 1)) for i in range(count)]
+            
             for idx, (_, player) in enumerate(pos_players.iterrows()):
                 x_val = x_coords[idx]
-                card_text = f"<b>{player['web_name']}</b><br>£{player['now_cost']}m | {player['xP']} xP"
                 
+                # HTML formatted pitch badge card
+                card_text = (
+                    f"<b>{player['web_name']}</b><br>"
+                    f"<span style='font-size:11px; color:#00FF7F;'>{player['xP']} xP</span>"
+                    f" | <span style='font-size:10px; color:#B0B0B0;'>£{player['now_cost']}m</span>"
+                )
+                
+                # Outer glow marker (Jersey node)
                 fig.add_trace(go.Scatter(
                     x=[x_val],
                     y=[y_val],
                     mode="markers+text",
-                    marker=dict(size=18, color="#37003c", line=dict(width=2, color="white")),
+                    marker=dict(
+                        size=28, 
+                        color="#37003c", 
+                        line=dict(width=2.5, color="#00FF7F")
+                    ),
                     text=[card_text],
                     textposition="bottom center",
                     hoverinfo="text",
                     showlegend=False
                 ))
 
+    # Layout tuning (remove padding, axis ticks, grid lines)
     fig.update_layout(
-        xaxis=dict(range=[-5, 105], showgrid=False, zeroline=False, showticklabels=False),
-        yaxis=dict(range=[-5, 105], showgrid=False, zeroline=False, showticklabels=False),
-        height=600,
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="#008a4b",
+        xaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
+        yaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
+        height=680,
+        margin=dict(l=5, r=5, t=5, b=5),
+        plot_bgcolor="#12251a",
         paper_bgcolor="#0E1117"
     )
     return fig
