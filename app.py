@@ -40,7 +40,7 @@ st.markdown("""
     div[data-testid="stSidebar"] button[kind="tertiary"] p {
         font-size: 32px !important;       /* Larger title font size */
         font-weight: 900 !important;       /* Extra bold */
-        color: #00FF7F !important;         /* FPL Accent Green */
+        color: #00FF7F !important;          /* FPL Accent Green */
         letter-spacing: -0.5px !important;
         line-height: 1.2 !important;
     }
@@ -153,15 +153,34 @@ players_df['ep_next'] = pd.to_numeric(players_df['ep_next'], errors='coerce').fi
 
 # Build dynamic team fixture dictionary (GW1–GW38 supported)
 team_fixtures = {}
+team_fixture_details = {}  # Detailed info for visual representation
 for f in fixtures_data:
     gw = f.get('event')
     if gw:
-        team_fixtures.setdefault(f['team_h'], {})[gw] = f['team_h_difficulty']
-        team_fixtures.setdefault(f['team_a'], {})[gw] = f['team_a_difficulty']
+        home_team_id = f['team_h']
+        away_team_id = f['team_a']
+        home_fdr = f['team_h_difficulty']
+        away_fdr = f['team_a_difficulty']
 
-# --- ENHANCED & CALIBRATED UNIQUE XP MODEL ---
+        # Store FDR values
+        team_fixtures.setdefault(home_team_id, {})[gw] = home_fdr
+        team_fixtures.setdefault(away_team_id, {})[gw] = away_fdr
+
+        # Store visual metadata: Opponent Short Name + Home/Away designator
+        team_fixture_details.setdefault(home_team_id, {})[gw] = {
+            'opponent': team_short_map.get(away_team_id, 'UNK'),
+            'venue': 'H',
+            'fdr': home_fdr
+        }
+        team_fixture_details.setdefault(away_team_id, {})[gw] = {
+            'opponent': team_short_map.get(home_team_id, 'UNK'),
+            'venue': 'A',
+            'fdr': away_fdr
+        }
+
+# --- ENHANCED & CALIBRATED UNIQUE XP MODEL WITH UPDATED FDR ---
 for gw in range(1, 11):
-    def calculate_gw_xp(row):
+    def calculate_gw_xp(row, target_gw=gw):
         # 1. Base anchor from FPL API
         base_ep = row['ep_next']
         
@@ -172,24 +191,22 @@ for gw in range(1, 11):
         # Calculate individual delta based on position
         pos = row['position']
         if pos in ['MID', 'FWD']:
-            # Attacking boost based on xGI per 90
             individual_delta = xgi_per_90 * 1.8
         elif pos == 'DEF':
-            # Attacking defenders get xGI boost; central defenders stay closer to base
-            individual_delta = (xgi_per_90 * 1.2)
+            individual_delta = xgi_per_90 * 1.2
         else:  # GKP
             individual_delta = 0.0
 
-        # 3. Minute Availability Scaling (Only scale down if player averages < 60 mins)
+        # 3. Minute Availability Scaling
         avg_mins = row['avg_minutes']
         minute_scale = 1.0 if avg_mins >= 60 else (avg_mins / 60.0)
 
         # 4. Combine Base + Individual Delta
         unadjusted_xp = (base_ep + individual_delta) * minute_scale
 
-        # 5. Apply Team FDR Modifier
+        # 5. Apply Refined Team FDR Modifier (10% adjustment per difficulty point away from neutral 3)
         team_id = row['team']
-        fdr = team_fixtures.get(team_id, {}).get(gw, 3)
+        fdr = team_fixtures.get(team_id, {}).get(target_gw, 3)
         fixture_modifier = 1.0 + ((3 - fdr) * 0.10)
         
         return round(max(0.0, unadjusted_xp * fixture_modifier), 2)
@@ -638,8 +655,9 @@ elif menu == "🔄 Transfer Planner":
         rem_bank = round(st.session_state.bank_balance - cost_diff, 1)
         m4.metric("Remaining Bank After Transfer", f"£{rem_bank:.1f}m")
 
+        # --- ENHANCED FDR FIXTURE LOOKUP & VISUAL DISPLAY ---
         st.markdown("#### 🗓️ Upcoming Fixture Difficulty (FDR) Comparison")
-        fdr_colors = {1: "🟩 #00FF7F", 2: "🟢 #00BFFF", 3: "⚪ #FFFFFF", 4: "🟠 #FF8C00", 5: "🔴 #FF4500"}
+        fdr_colors = {1: "#00FF7F", 2: "#00BFFF", 3: "#FFFFFF", 4: "#FF8C00", 5: "#FF4500"}
         
         fix_cols = st.columns(len(horizon_gws) + 1)
         fix_cols[0].markdown("**Player**")
@@ -649,16 +667,34 @@ elif menu == "🔄 Transfer Planner":
         fix_cols[0].write(f"🔴 **{p_out['web_name']}**")
         for i, gw_name in enumerate(horizon_gws):
             gw_num = int(gw_name.replace("GW", "").replace("_xP", ""))
-            fdr = team_fixtures.get(p_out['team'], {}).get(gw_num, 3)
-            color_badge = fdr_colors.get(fdr, "⚪ #FFFFFF")
-            fix_cols[i + 1].markdown(f"<span style='color:{color_badge.split(' ')[1]}; font-weight:bold;'>FDR {fdr}</span>", unsafe_allow_html=True)
+            fix_meta = team_fixture_details.get(p_out['team'], {}).get(gw_num, {'opponent': 'BYE', 'venue': '', 'fdr': 3})
+            fdr = fix_meta['fdr']
+            hex_color = fdr_colors.get(fdr, "#FFFFFF")
+            
+            label = f"{fix_meta['opponent']} ({fix_meta['venue']})" if fix_meta['opponent'] != 'BYE' else 'BYE'
+            fix_cols[i + 1].markdown(
+                f"<div style='line-height:1.2;'>"
+                f"<b>{label}</b><br>"
+                f"<span style='color:{hex_color}; font-weight:bold; font-size:12px;'>FDR {fdr}</span>"
+                f"</div>", 
+                unsafe_allow_html=True
+            )
 
         fix_cols[0].write(f"🟢 **{p_in['web_name']}**")
         for i, gw_name in enumerate(horizon_gws):
             gw_num = int(gw_name.replace("GW", "").replace("_xP", ""))
-            fdr = team_fixtures.get(p_in['team'], {}).get(gw_num, 3)
-            color_badge = fdr_colors.get(fdr, "⚪ #FFFFFF")
-            fix_cols[i + 1].markdown(f"<span style='color:{color_badge.split(' ')[1]}; font-weight:bold;'>FDR {fdr}</span>", unsafe_allow_html=True)
+            fix_meta = team_fixture_details.get(p_in['team'], {}).get(gw_num, {'opponent': 'BYE', 'venue': '', 'fdr': 3})
+            fdr = fix_meta['fdr']
+            hex_color = fdr_colors.get(fdr, "#FFFFFF")
+            
+            label = f"{fix_meta['opponent']} ({fix_meta['venue']})" if fix_meta['opponent'] != 'BYE' else 'BYE'
+            fix_cols[i + 1].markdown(
+                f"<div style='line-height:1.2;'>"
+                f"<b>{label}</b><br>"
+                f"<span style='color:{hex_color}; font-weight:bold; font-size:12px;'>FDR {fdr}</span>"
+                f"</div>", 
+                unsafe_allow_html=True
+            )
 
         st.markdown("---")
         if st.button("➕ Stage & Apply Transfer to Active Squad", type="primary"):
@@ -707,7 +743,7 @@ elif menu == "🔍 Player Explorer & Differentials":
     if pos_filter != "All":
         explorer_df = explorer_df[explorer_df['position'] == pos_filter]
 
-    # 4. Format Column Names
+    # 4. Format Column Names & Render Table
     rename_dict = {
         'web_name': 'Player',
         'team_short': 'Team',
@@ -721,16 +757,11 @@ elif menu == "🔍 Player Explorer & Differentials":
         'avg_minutes': 'Avg Mins'
     }
     
-    for i in range(1, 11):
-        if f'GW{i}_xP' not in rename_dict:
-            rename_dict[f'GW{i}_xP'] = f'GW{i} xP'
+    for c in gw_cols:
+        if c != selected_gw_col:
+            rename_dict[c] = c.replace('_xP', '')
 
     explorer_df = explorer_df.rename(columns=rename_dict)
+    explorer_df = explorer_df.sort_values(by=f'Target ({selected_gw}) xP', ascending=False)
     
-    # Sort primarily by selected GW expected points
-    sort_column = f'Target ({selected_gw}) xP'
-    explorer_df = explorer_df.sort_values(by=sort_column, ascending=False)
-
-    # 5. Display Interactive Table
-    st.markdown(f"Showing **{len(explorer_df)}** matching players:")
     st.dataframe(explorer_df, use_container_width=True, hide_index=True)
