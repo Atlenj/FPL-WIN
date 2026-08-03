@@ -111,18 +111,28 @@ players_df['form'] = pd.to_numeric(players_df['form'], errors='coerce').fillna(0
 players_df['points_per_game'] = pd.to_numeric(players_df['points_per_game'], errors='coerce').fillna(0)
 players_df['chance_of_playing_next_round'] = players_df['chance_of_playing_next_round'].fillna(100) / 100.0
 
-# Expected Points (xP) Model
-players_df['xP'] = (
-    (players_df['form'] * 0.50) + 
-    (players_df['points_per_game'] * 0.35) + 
+# Base Single Gameweek xP
+players_df['xP_1GW'] = (
+    (players_df['form'] * 0.45) + 
+    (players_df['points_per_game'] * 0.40) + 
     (players_df['chance_of_playing_next_round'] * 1.5)
 ).round(2)
+
+# --- SIDEBAR CONTROLS ---
+st.sidebar.title("⚽ FPL AI Coach")
+st.sidebar.markdown(f"**Current Gameweek:** GW{current_gw}")
+
+# Horizon Selector (GW1 to GW10)
+gw_horizon = st.sidebar.slider("📅 Projection Horizon (Gameweeks)", min_value=1, max_value=10, value=10, help="Project expected points across 1 to 10 Gameweeks.")
+
+# Scale xP model according to selected Gameweek Horizon
+players_df['xP'] = (players_df['xP_1GW'] * gw_horizon).round(1)
 
 # Add display label for select boxes
 players_df['display_label'] = players_df['web_name'] + " (" + players_df['team_name'] + ") - £" + players_df['now_cost'].astype(str) + "m"
 
 # --- ENHANCED PITCH GENERATOR FUNCTION ---
-def generate_fpl_pitch(starting_11_df):
+def generate_fpl_pitch(starting_11_df, horizon):
     fig = go.Figure()
 
     # Pitch surface (Dark tactical green gradient tone)
@@ -155,7 +165,7 @@ def generate_fpl_pitch(starting_11_df):
     fig.add_shape(type="rect", x0=36, y0=91, x1=64, y1=97, 
                   line=dict(color="#458a60", width=1.5))
 
-    # Dynamic Position Y-coordinates (realistic tactical heights)
+    # Dynamic Position Y-coordinates
     pos_y_map = {'GKP': 11, 'DEF': 32, 'MID': 60, 'FWD': 84}
 
     # Map positions and add player nodes
@@ -164,7 +174,6 @@ def generate_fpl_pitch(starting_11_df):
         count = len(pos_players)
         
         if count > 0:
-            # Calculate even horizontal spacing across pitch width (3 to 97 range)
             x_coords = [3 + (94 * (i + 1) / (count + 1)) for i in range(count)]
             
             for idx, (_, player) in enumerate(pos_players.iterrows()):
@@ -173,7 +182,7 @@ def generate_fpl_pitch(starting_11_df):
                 # HTML formatted pitch badge card
                 card_text = (
                     f"<b>{player['web_name']}</b><br>"
-                    f"<span style='font-size:11px; color:#00FF7F;'>{player['xP']} xP</span>"
+                    f"<span style='font-size:11px; color:#00FF7F;'>{player['xP']} xP ({horizon} GWs)</span>"
                     f" | <span style='font-size:10px; color:#B0B0B0;'>£{player['now_cost']}m</span>"
                 )
                 
@@ -193,7 +202,6 @@ def generate_fpl_pitch(starting_11_df):
                     showlegend=False
                 ))
 
-    # Layout tuning (remove padding, axis ticks, grid lines)
     fig.update_layout(
         xaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
         yaxis=dict(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
@@ -204,10 +212,7 @@ def generate_fpl_pitch(starting_11_df):
     )
     return fig
 
-# --- SIDEBAR NAVIGATION ---
-st.sidebar.title("⚽ FPL AI Coach")
-st.sidebar.markdown(f"**Current Gameweek:** GW{current_gw}")
-
+# --- NAVIGATION ROUTING ---
 menu = st.sidebar.radio(
     "Navigation", 
     ["📊 Dashboard Overview", "🛡️ My Squad & Pitch View", "🔍 Player Explorer"]
@@ -217,9 +222,8 @@ st.sidebar.markdown("---")
 manager_id_input = st.sidebar.text_input("Enter FPL Manager ID", value="475093")
 use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", value=True, help="Check this to manually select your 11 players before Gameweek 1 starts!")
 
-# --- NAVIGATION ROUTING ---
 if menu == "📊 Dashboard Overview":
-    st.title("📊 Gameweek Projections & Insights")
+    st.title(f"📊 Projected Insights ({gw_horizon} Gameweeks)")
 
     col1, col2, col3, col4 = st.columns(4)
     top_overall = players_df.sort_values(by='xP', ascending=False).iloc[0]
@@ -230,10 +234,10 @@ if menu == "📊 Dashboard Overview":
     col1.metric("Top Pick", top_overall['web_name'], f"{top_overall['xP']} xP")
     col2.metric("Top Midfielder", top_mid['web_name'], f"{top_mid['xP']} xP")
     col3.metric("Top Defender", top_def['web_name'], f"{top_def['xP']} xP")
-    col4.metric("Top Form Pick", top_val['web_name'], f"£{top_val['now_cost']}m")
+    col4.metric("Top Value Pick", top_val['web_name'], f"£{top_val['now_cost']}m")
 
     st.markdown("---")
-    st.subheader("🚀 Top 15 Projected Scorers")
+    st.subheader(f"🚀 Top 15 Projected Scorers (GW 1 to GW {gw_horizon})")
     top_15 = players_df.sort_values(by='xP', ascending=False).head(15)
 
     fig = px.bar(
@@ -241,7 +245,7 @@ if menu == "📊 Dashboard Overview":
         color_discrete_map={'GKP': '#FFD700', 'DEF': '#00BFFF', 'MID': '#00FF7F', 'FWD': '#FF4500'}
     )
     fig.update_traces(texttemplate='%{text}', textposition='outside')
-    fig.update_layout(xaxis_title="Player", yaxis_title="Expected Points (xP)", height=450)
+    fig.update_layout(xaxis_title="Player", yaxis_title=f"Expected Points (xP over {gw_horizon} GWs)", height=450)
     st.plotly_chart(fig, use_container_width=True)
 
 elif menu == "🛡️ My Squad & Pitch View":
@@ -324,18 +328,31 @@ elif menu == "🛡️ My Squad & Pitch View":
 
     # Render Pitch & Metrics if starting XI selected
     if not starting_11.empty:
-        total_xp = starting_11['xP'].sum().round(2)
+        total_xp = starting_11['xP'].sum().round(1)
         total_cost = starting_11['now_cost'].sum().round(1)
         
         m_col1, m_col2, m_col3 = st.columns(3)
         m_col1.metric("Selected Players", len(starting_11))
         m_col2.metric("Starting XI Cost", f"£{total_cost:.1f}m")
-        m_col3.metric("Projected Points", f"{total_xp:.2f} pts")
+        m_col3.metric(f"Projected Points ({gw_horizon} GWs)", f"{total_xp:.1f} pts")
 
-        st.subheader("🏟️ Pitch View")
-        pitch_fig = generate_fpl_pitch(starting_11)
+        st.subheader(f"🏟️ Pitch View — GW1 to GW{gw_horizon} Cumulative xP")
+        pitch_fig = generate_fpl_pitch(starting_11, gw_horizon)
         st.plotly_chart(pitch_fig, use_container_width=True)
 
 elif menu == "🔍 Player Explorer":
     st.title("🔍 Player Comparison")
-    st.dataframe(players_df[['web_name', 'team_name', 'position', 'now_cost', 'xP', 'form']].sort_values(by='xP', ascending=False), use_container_width=True)
+    st.markdown(f"*(Displaying cumulative xP totals over **{gw_horizon} Gameweeks**)*")
+    
+    explorer_df = players_df[['web_name', 'team_name', 'position', 'now_cost', 'xP', 'xP_1GW', 'form']].copy()
+    explorer_df = explorer_df.rename(columns={
+        'web_name': 'Player',
+        'team_name': 'Team',
+        'position': 'Pos',
+        'now_cost': 'Cost (£m)',
+        'xP': f'xP ({gw_horizon} GWs)',
+        'xP_1GW': 'xP (1 GW)',
+        'form': 'Form'
+    }).sort_values(by=f'xP ({gw_horizon} GWs)', ascending=False)
+    
+    st.dataframe(explorer_df, use_container_width=True)
