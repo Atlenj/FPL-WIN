@@ -29,19 +29,20 @@ st.markdown("""
         background-color: #161922;
         border-right: 1px solid #2B313E;
     }
-    /* Style sidebar header button to look like a prominent large title */
+    
+    /* Style sidebar header button to look like a prominent, larger title */
     div[data-testid="stSidebar"] button[kind="tertiary"] {
-        font-size: 32px !important;
-        font-weight: 900 !important;
-        color: #00FF7F !important;
         padding: 5px 0px !important;
         text-align: left !important;
         justify-content: flex-start !important;
-        letter-spacing: -0.5px !important;
     }
+    
     div[data-testid="stSidebar"] button[kind="tertiary"] p {
-        font-size: 32px !important;
-        font-weight: 900 !important;
+        font-size: 32px !important;       /* Larger title font size */
+        font-weight: 900 !important;       /* Extra bold */
+        color: #00FF7F !important;         /* FPL Accent Green */
+        letter-spacing: -0.5px !important;
+        line-height: 1.2 !important;
     }
     </style>
 """, unsafe_allow_html=True)
