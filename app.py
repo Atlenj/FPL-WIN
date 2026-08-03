@@ -51,10 +51,33 @@ def load_fpl_bootstrap():
     return None
 
 def fetch_user_squad(manager_id, current_gw):
-    url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/{current_gw}/picks/"
-    response = requests.get(url)
+    # Use standard browser headers to prevent FPL API from blocking requests
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    # Fallback to GW1 if current_gw is 0 or invalid
+    gw = max(1, current_gw)
+    
+    # First, verify if the manager ID exists
+    entry_url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/"
+    entry_res = requests.get(entry_url, headers=headers)
+    
+    if entry_res.status_code != 200:
+        return None  # Manager ID does not exist
+        
+    # Attempt to fetch squad picks for the current Gameweek
+    picks_url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/{gw}/picks/"
+    response = requests.get(picks_url, headers=headers)
+    
+    # If current GW hasn't started yet, fall back to previous GW or return entry info
+    if response.status_code == 404 and gw > 1:
+        picks_url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/{gw - 1}/picks/"
+        response = requests.get(picks_url, headers=headers)
+        
     if response.status_code == 200:
         return response.json()
+        
     return None
 
 # Load base data
