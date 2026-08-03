@@ -725,82 +725,64 @@ elif menu == "🔄 Transfer Planner":
 
         st.markdown("---")
         if st.button("➕ Stage & Apply Transfer to Active Squad", type="primary"):
-            new_squad_ids = [pid for pid in current_squad_ids if pid != player_out_id] + [player_in_id]
-            st.session_state.custom_squad_ids = new_squad_ids
+            updated_squad = [pid for pid in current_squad_ids if pid != player_out_id] + [player_in_id]
+            st.session_state.custom_squad_ids = updated_squad
             st.session_state.bank_balance = rem_bank
-            st.success(f"✅ Transfer Applied! Sold {p_out['web_name']}, bought {p_in['web_name']}.")
+            st.session_state.planned_transfers.append({
+                'out': p_out['web_name'],
+                'in': p_in['web_name'],
+                'cost_diff': cost_diff,
+                'xp_gain': xp_diff_single
+            })
+            st.success(f"✅ Transfer Applied! {p_out['web_name']} ➔ {p_in['web_name']}. Bank balance updated to £{rem_bank:.1f}m.")
             st.rerun()
 
-# --- PLAYER EXPLORER PAGE (COLOR GRADIENT ENHANCED) ---
+# --- PLAYER EXPLORER & DIFFERENTIALS PAGE ---
 elif menu == "🔍 Player Explorer & Differentials":
-    st.title("🔍 Player Explorer & Differential Finder")
-    st.caption("Search for any player in Premier League, filter position/ownership, and inspect expected points columns from GW1 to GW10.")
+    st.title("🔍 Player Explorer & Differentials Finder")
+    st.caption("Discover low-ownership differential gems, filter by price or position, and analyze underlying metrics.")
 
-    # 1. Controls & Search Filter Inputs
-    col_search, col_pos, col_diff = st.columns([2, 1, 1])
+    col_filter1, col_filter2, col_filter3 = st.columns(3)
     
-    with col_search:
-        search_query = st.text_input("🔍 Search Player or Team Name:", value="", placeholder="Type e.g., Haaland, Palmer, Arsenal...")
+    with col_filter1:
+        pos_filter = st.multiselect("Position", options=['GKP', 'DEF', 'MID', 'FWD'], default=['MID', 'FWD'])
+    
+    with col_filter2:
+        max_price = st.slider("Max Player Price (£m)", min_value=4.0, max_value=15.0, value=10.0, step=0.5)
         
-    with col_pos:
-        pos_filter = st.selectbox("Position Filter", options=["All", "GKP", "DEF", "MID", "FWD"])
-        
-    with col_diff:
-        only_differentials = st.checkbox("🌟 Differentials Only (< 10% Ownership)", value=False)
+    with col_filter3:
+        max_ownership = st.slider("Max Ownership % (Differentials)", min_value=1.0, max_value=50.0, value=10.0, step=1.0)
 
-    # 2. Extract Columns
-    gw_cols = [f'GW{i}_xP' for i in range(1, 11)]
-    
-    base_cols = ['web_name', 'team_short', 'position', 'now_cost', 'selected_by_percent', selected_gw_col]
-    all_explorer_cols = base_cols + [c for c in gw_cols if c != selected_gw_col] + ['ep_next', 'expected_goals', 'expected_assists', 'avg_minutes']
-    
-    explorer_df = players_df[all_explorer_cols].copy()
-    
-    # 3. Apply Search and Filters
-    if search_query:
-        query = search_query.strip().lower()
-        explorer_df = explorer_df[
-            explorer_df['web_name'].str.lower().str.contains(query) | 
-            explorer_df['team_short'].str.lower().str.contains(query)
-        ]
-        
-    if only_differentials:
-        explorer_df = explorer_df[explorer_df['selected_by_percent'] < 10.0]
-        
-    if pos_filter != "All":
-        explorer_df = explorer_df[explorer_df['position'] == pos_filter]
+    filtered_df = players_df[
+        (players_df['position'].isin(pos_filter)) &
+        (players_df['now_cost'] <= max_price) &
+        (players_df['selected_by_percent'] <= max_ownership)
+    ].sort_values(by=selected_gw_col, ascending=False)
 
-    # 4. Format Column Names
-    rename_dict = {
-        'web_name': 'Player',
-        'team_short': 'Team',
-        'position': 'Pos',
-        'now_cost': 'Cost (£m)',
-        'selected_by_percent': 'Ownership (%)',
-        selected_gw_col: f'Target ({selected_gw}) xP',
-        'ep_next': 'ep_next',
-        'expected_goals': 'xG',
-        'expected_assists': 'xA',
-        'avg_minutes': 'Avg Mins'
-    }
+    st.markdown(f"### 💎 Top Differentials for {selected_gw} (< {max_ownership}% Ownership)")
     
-    for c in gw_cols:
-        if c != selected_gw_col:
-            rename_dict[c] = c.replace('_xP', '')
-
-    explorer_df = explorer_df.rename(columns=rename_dict)
-    explorer_df = explorer_df.sort_values(by=f'Target ({selected_gw}) xP', ascending=False)
+    display_cols = ['web_name', 'position', 'team_short', 'now_cost', 'selected_by_percent', selected_gw_col, 'expected_goal_involvements', 'minutes']
     
-    # 5. Apply Background Color Gradient to Numeric xP/GW Columns via Pandas Styler
-    target_xp_col_name = f'Target ({selected_gw}) xP'
-    gw_col_names = [c.replace('_xP', '') for c in gw_cols if c != selected_gw_col]
-    numeric_xp_subset = [target_xp_col_name] + gw_col_names
+    explorer_table = filtered_df[display_cols].copy()
+    explorer_table.columns = ['Player', 'Pos', 'Team', 'Price (£m)', 'Ownership %', f'xP ({selected_gw})', 'xGI', 'Minutes Played']
+    
+    st.dataframe(explorer_table.head(20), use_container_width=True, hide_index=True)
 
-    styled_df = explorer_df.style.background_gradient(
-        cmap="YlGn",                  # High visual contrast: Yellow -> Bright Green
-        subset=numeric_xp_subset,
-        low=0.2, 
-        high=0.85
-    ).format("{:.2f}", subset=numeric_xp_subset)
-
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.markdown("---")
+    st.subheader("📈 Value vs Expected Points Scatter Analysis")
+    
+    fig_scatter = px.scatter(
+        filtered_df.head(40),
+        x='now_cost',
+        y=selected_gw_col,
+        size='selected_by_percent',
+        color='position',
+        hover_name='web_name',
+        text='web_name',
+        labels={'now_cost': 'Cost (£m)', selected_gw_col: f'Expected Points ({selected_gw})'},
+        template='plotly_dark'
+    )
+    fig_scatter.update_traces(textposition='top center')
+    fig_scatter.update_layout(height=500)
+    
+    st.plotly_chart(fig_scatter, use_container_width=True)
