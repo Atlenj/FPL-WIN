@@ -285,3 +285,63 @@ elif menu == "⚔️ Team & Fixture Analytics":
         color_continuous_scale='Greens'
     )
     st.plotly_chart(fig_teams, use_container_width=True)
+
+import plotly.graph_objects as go
+
+def generate_fpl_pitch(starting_11_df):
+    """
+    Renders an interactive FPL 2D Pitch with players, position badges, prices, and xP.
+    """
+    # Create dark green pitch canvas
+    fig = go.Figure()
+
+    # Pitch Outline & Center Line
+    fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=100, fillcolor="#008a4b", line=dict(color="white", width=2))
+    fig.add_shape(type="line", x0=0, y0=50, x1=100, y1=50, line=dict(color="white", width=2))
+    fig.add_shape(type="circle", x0=35, y0=35, x1=65, y1=65, line=dict(color="white", width=2))
+    
+    # Penalty Boxes
+    fig.add_shape(type="rect", x0=20, y0=0, x1=80, y1=15, line=dict(color="white", width=2))
+    fig.add_shape(type="rect", x0=20, y0=85, x1=80, y1=100, line=dict(color="white", width=2))
+
+    # Y-Coordinates for Pitch Rows
+    pos_y_map = {'GKP': 8, 'DEF': 32, 'MID': 60, 'FWD': 88}
+
+    # Group players by position to distribute X-coordinates evenly across pitch width
+    for pos, y_val in pos_y_map.items():
+        pos_players = starting_11_df[starting_11_df['position'] == pos]
+        count = len(pos_players)
+        
+        if count > 0:
+            # Calculate spacing for players in this line
+            x_coords = [100 * (i + 1) / (count + 1) for i in range(count)]
+            
+            for idx, (_, player) in enumerate(pos_players.iterrows()):
+                x_val = x_coords[idx]
+                
+                # Player Name + Info Box Label
+                card_text = f"<b>{player['web_name']}</b><br>£{player['now_cost']}m | {player['xP']} xP"
+                
+                # Add Marker Dot for Player
+                fig.add_trace(go.Scatter(
+                    x=[x_val],
+                    y=[y_val],
+                    mode="markers+text",
+                    marker=dict(size=18, color="#37003c", line=dict(width=2, color="white")),
+                    text=[card_text],
+                    textposition="bottom center",
+                    hoverinfo="text",
+                    showlegend=False
+                ))
+
+    # Layout styling
+    fig.update_layout(
+        xaxis=dict(range=[-5, 105], showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(range=[-5, 105], showgrid=False, zeroline=False, showticklabels=False),
+        height=600,
+        margin=dict(l=10, r=10, t=10, b=10),
+        plot_bgcolor="#008a4b",
+        paper_bgcolor="#0E1117"
+    )
+
+    return fig
