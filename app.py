@@ -262,19 +262,45 @@ elif menu == "🛡️ My Squad & Pitch View":
 
         with col_gkp:
             st.markdown("### 🧤 Goalkeeper (1)")
-            selected_gkp = st.selectbox("GKP 1", options=gkps['id'].tolist(), format_func=lambda x: gkps[gkps['id']==x]['display_label'].values[0])
+            selected_gkp = st.selectbox(
+                "GKP 1", 
+                options=gkps['id'].tolist(), 
+                index=0,
+                format_func=lambda x: gkps[gkps['id']==x]['display_label'].values[0]
+            )
             
         with col_def:
             st.markdown("### 🛡️ Defenders (3-5)")
-            selected_defs = st.multiselect("Defenders", options=defs['id'].tolist(), default=defs['id'].tolist()[:4], format_func=lambda x: defs[defs['id']==x]['display_label'].values[0], max_selections=5)
+            default_defs = defs['id'].tolist()[:4] if len(defs) >= 4 else defs['id'].tolist()
+            selected_defs = st.multiselect(
+                "Defenders", 
+                options=defs['id'].tolist(), 
+                default=default_defs, 
+                format_func=lambda x: defs[defs['id']==x]['display_label'].values[0], 
+                max_selections=5
+            )
 
         with col_mid:
             st.markdown("### ⚙️ Midfielders (3-5)")
-            selected_mids = st.multiselect("Midfielders", options=mids['id'].tolist(), default=mids['id'].tolist()[:4], format_func=lambda x: mids[mids['id']==x]['display_label'].values[0], max_selections=5)
+            default_mids = mids['id'].tolist()[:4] if len(mids) >= 4 else mids['id'].tolist()
+            selected_mids = st.multiselect(
+                "Midfielders", 
+                options=mids['id'].tolist(), 
+                default=default_mids, 
+                format_func=lambda x: mids[mids['id']==x]['display_label'].values[0], 
+                max_selections=5
+            )
 
         with col_fwd:
             st.markdown("### 🎯 Forwards (1-3)")
-            selected_fwds = st.multiselect("Forwards", options=fwds['id'].tolist(), default=fwds['id'].tolist()[:2], format_func=lambda x: fwds[fwds['id']==x]['display_label'].values[0], max_selections=3)
+            default_fwds = fwds['id'].tolist()[:2] if len(fwds) >= 2 else fwds['id'].tolist()
+            selected_fwds = st.multiselect(
+                "Forwards", 
+                options=fwds['id'].tolist(), 
+                default=default_fwds, 
+                format_func=lambda x: fwds[fwds['id']==x]['display_label'].values[0], 
+                max_selections=3
+            )
 
         selected_ids = [selected_gkp] + selected_defs + selected_mids + selected_fwds
         starting_11 = players_df[players_df['id'].isin(selected_ids)].copy()
