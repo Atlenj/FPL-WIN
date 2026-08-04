@@ -220,7 +220,6 @@ players_df["display_label"] = (
     + players_df["now_cost"].astype(str) + "m"
 )
 
-# Photo URLs
 def get_player_photo_url(photo_code: str) -> str:
     if not photo_code or not isinstance(photo_code, str):
         return "https://resources.premierleague.com/premierleague/photos/players/110x140/Photo-Missing.png"
@@ -230,7 +229,6 @@ def get_player_photo_url(photo_code: str) -> str:
 players_df["photo"] = players_df.get("photo", "")
 players_df["photo_url"] = players_df["photo"].apply(get_player_photo_url)
 
-# Fixtures
 team_fixtures: Dict[int, Dict[int, int]] = {}
 team_fixture_details: Dict[int, Dict[int, dict]] = {}
 
@@ -378,25 +376,16 @@ def generate_fpl_pitch(
 ):
     fig = go.Figure()
 
-    # Pitch background
     fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=130,
                   fillcolor="#2d8a4e", line=dict(width=0), layer="below")
-
-    # Outer border
     fig.add_shape(type="rect", x0=2, y0=4, x1=98, y1=126,
                   line=dict(color="white", width=2.5), fillcolor="rgba(0,0,0,0)")
-
-    # Halfway line
     fig.add_shape(type="line", x0=2, y0=65, x1=98, y1=65,
                   line=dict(color="white", width=2))
-
-    # Centre circle + spot
     fig.add_shape(type="circle", x0=42, y0=55, x1=58, y1=75,
                   line=dict(color="white", width=2))
     fig.add_shape(type="circle", x0=49.2, y0=64.2, x1=50.8, y1=65.8,
                   fillcolor="white", line=dict(width=0))
-
-    # Penalty areas
     fig.add_shape(type="rect", x0=22, y0=104, x1=78, y1=126,
                   line=dict(color="white", width=2))
     fig.add_shape(type="rect", x0=36, y0=116, x1=64, y1=126,
@@ -405,8 +394,6 @@ def generate_fpl_pitch(
                   line=dict(color="white", width=2))
     fig.add_shape(type="rect", x0=36, y0=4, x1=64, y1=14,
                   line=dict(color="white", width=2))
-
-    # Goal mouths
     fig.add_shape(type="rect", x0=42, y0=126, x1=58, y1=129,
                   line=dict(color="white", width=2))
     fig.add_shape(type="rect", x0=42, y0=1, x1=58, y1=4,
@@ -478,7 +465,6 @@ def generate_fpl_pitch(
                 showarrow=False,
             )
 
-    # Starting XI
     for pos, y_val in pos_y.items():
         pos_players = starting_11_df[starting_11_df["position"] == pos]
         n = len(pos_players)
@@ -488,7 +474,6 @@ def generate_fpl_pitch(
         for i, (_, pl) in enumerate(pos_players.iterrows()):
             add_player_card(xs[i], y_val, pl)
 
-    # Bench
     if not bench_df.empty:
         bench_ordered = bench_df.copy()
         if "squad_order" in bench_ordered.columns:
@@ -708,7 +693,6 @@ elif menu == "🛡️ My Squad & Pitch View":
         bench_df = pd.DataFrame()
 
     if not starting_11.empty:
-        # Captain & vice
         captain_id = starting_11.sort_values("xP", ascending=False).iloc[0]["id"]
         vice_id = None
         if picks_data:
@@ -872,43 +856,161 @@ elif menu == "🔄 Transfer Planner":
         st.dataframe(pd.DataFrame(st.session_state.planned_transfers), hide_index=True)
 
 # =============================================================================
-# EXPLORER
+# PLAYER EXPLORER & DIFFERENTIALS
 # =============================================================================
 elif menu == "🔍 Player Explorer & Differentials":
     st.title("🔍 Player Explorer & Differentials")
 
-    f1, f2, f3 = st.columns(3)
+    # --- Filters ---
+    f1, f2, f3, f4 = st.columns([2, 1.2, 1.2, 1.2])
+
     with f1:
-        pos_f = st.multiselect("Position", ["GKP", "DEF", "MID", "FWD"], default=["MID", "FWD"])
+        search_query = st.text_input(
+            "🔎 Search player",
+            placeholder="Type player name…",
+            key="explorer_search",
+        )
+
     with f2:
-        max_price = st.slider("Max Price (£m)", 4.0, 15.0, 10.0, 0.5)
+        pos_f = st.multiselect(
+            "Position",
+            options=["GKP", "DEF", "MID", "FWD"],
+            default=["GKP", "DEF", "MID", "FWD"],
+            key="explorer_pos",
+        )
+
     with f3:
-        max_own = st.slider("Max Ownership %", 1.0, 50.0, 12.0, 1.0)
+        max_price = st.slider(
+            "Max Price (£m)",
+            min_value=4.0,
+            max_value=15.0,
+            value=15.0,
+            step=0.5,
+            key="explorer_price",
+        )
 
-    filtered = players_df[
-        (players_df["position"].isin(pos_f))
-        & (players_df["now_cost"] <= max_price)
-        & (players_df["selected_by_percent"] <= max_own)
-    ].sort_values(selected_gw_col, ascending=False)
+    with f4:
+        differentials_mode = st.toggle(
+            "💎 Differentials only",
+            value=False,
+            help="When ON, only shows players below the ownership threshold",
+        )
 
-    st.markdown(f"### 💎 Top Differentials — {selected_gw_label} (<{max_own}% owned)")
-    show = filtered[
-        ["web_name", "position", "team_short", "now_cost", "selected_by_percent",
-         selected_gw_col, "xgi_p90", "minutes"]
-    ].head(25).copy()
-    show.columns = ["Player", "Pos", "Team", "Price", "Own%", f"xP ({selected_gw_label})", "xGI/90", "Mins"]
-    st.dataframe(show, use_container_width=True, hide_index=True)
+    max_own = 100.0
+    if differentials_mode:
+        max_own = st.slider(
+            "Max Ownership %",
+            min_value=1.0,
+            max_value=50.0,
+            value=12.0,
+            step=1.0,
+            key="explorer_own",
+        )
 
-    st.markdown("---")
-    st.subheader("📈 Price vs xP (bubble = ownership)")
-    fig = px.scatter(
-        filtered.head(50),
-        x="now_cost", y=selected_gw_col,
-        size="selected_by_percent", color="position",
-        hover_name="web_name", text="web_name",
-        labels={"now_cost": "Cost (£m)", selected_gw_col: f"xP ({selected_gw_label})"},
-        template="plotly_dark",
-    )
-    fig.update_traces(textposition="top center")
-    fig.update_layout(height=520)
-    st.plotly_chart(fig, use_container_width=True)
+    # --- Filtering logic ---
+    filtered = players_df.copy()
+
+    if pos_f:
+        filtered = filtered[filtered["position"].isin(pos_f)]
+
+    filtered = filtered[filtered["now_cost"] <= max_price]
+
+    if differentials_mode:
+        filtered = filtered[filtered["selected_by_percent"] <= max_own]
+
+    if search_query and search_query.strip():
+        q = search_query.strip().lower()
+        filtered = filtered[
+            filtered["web_name"].str.lower().str.contains(q, na=False)
+            | filtered["team_name"].str.lower().str.contains(q, na=False)
+            | filtered["team_short"].str.lower().str.contains(q, na=False)
+        ]
+
+    filtered = filtered.sort_values(selected_gw_col, ascending=False)
+
+    # --- Results header ---
+    if differentials_mode:
+        st.markdown(
+            f"### 💎 Differentials — {selected_gw_label} "
+            f"(<{max_own}% ownership) · {len(filtered)} players"
+        )
+    else:
+        st.markdown(
+            f"### 📋 All Players — {selected_gw_label} · {len(filtered)} players"
+        )
+
+    if filtered.empty:
+        st.info("No players match your current filters / search.")
+    else:
+        show = filtered[
+            [
+                "web_name",
+                "position",
+                "team_short",
+                "now_cost",
+                "selected_by_percent",
+                selected_gw_col,
+                "xgi_p90",
+                "minutes",
+                "form",
+            ]
+        ].head(50).copy()
+
+        show.columns = [
+            "Player",
+            "Pos",
+            "Team",
+            "Price",
+            "Own %",
+            f"xP ({selected_gw_label})",
+            "xGI/90",
+            "Mins",
+            "Form",
+        ]
+
+        st.dataframe(
+            show,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Price": st.column_config.NumberColumn(format="£%.1f"),
+                "Own %": st.column_config.NumberColumn(format="%.1f%%"),
+                f"xP ({selected_gw_label})": st.column_config.NumberColumn(format="%.2f"),
+                "xGI/90": st.column_config.NumberColumn(format="%.2f"),
+            },
+        )
+
+        if len(filtered) >= 5:
+            st.markdown("---")
+            st.subheader("📈 Price vs xP (bubble size = ownership)")
+
+            scatter_df = filtered.head(60)
+            fig = px.scatter(
+                scatter_df,
+                x="now_cost",
+                y=selected_gw_col,
+                size="selected_by_percent",
+                color="position",
+                hover_name="web_name",
+                hover_data={
+                    "team_short": True,
+                    "selected_by_percent": ":.1f",
+                    "now_cost": ":.1f",
+                    selected_gw_col: ":.2f",
+                },
+                labels={
+                    "now_cost": "Cost (£m)",
+                    selected_gw_col: f"xP ({selected_gw_label})",
+                    "selected_by_percent": "Ownership %",
+                },
+                template="plotly_dark",
+                color_discrete_map={
+                    "GKP": "#FFD700",
+                    "DEF": "#00BFFF",
+                    "MID": "#00FF7F",
+                    "FWD": "#FF4500",
+                },
+            )
+            fig.update_traces(textposition="top center")
+            fig.update_layout(height=520, showlegend=True)
+            st.plotly_chart(fig, use_container_width=True)
