@@ -1,24 +1,63 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import plotly.express as px
 import plotly.graph_objects as go
+from typing import Optional, Dict, List, Any
 
-# --- PAGE CONFIGURATION & DARK THEME SETUP ---
+# =============================================================================
+# CONFIG & CONSTANTS
+# =============================================================================
+PAGE_TITLE = "PL-Kameratene"
+FPL_BASE = "https://fantasy.premierleague.com/api"
+DEFAULT_MANAGER_ID = "475093"
+MAX_GW_HORIZON = 10
+CACHE_TTL = 3600
+
+# xP model knobs (tune these)
+XGI_WEIGHT = {"GKP": 0.0, "DEF": 0.9, "MID": 1.4, "FWD": 1.6}
+FDR_WEIGHT = 0.08          # per FDR step away from 3
+MINUTES_THRESHOLD = 60.0
+EP_BLEND = 0.65            # how much official ep_next to trust vs underlying
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+}
+
+FDR_COLORS = {
+    1: ("#00FF7F", "#000000"),
+    2: ("#00BFFF", "#000000"),
+    3: ("#E0E0E0", "#000000"),
+    4: ("#FF8C00", "#FFFFFF"),
+    5: ("#FF4500", "#FFFFFF"),
+}
+
+# Legal FPL formations (DEF, MID, FWD) — GKP always 1
+LEGAL_FORMATIONS = [
+    (3, 4, 3), (3, 5, 2), (4, 3, 3), (4, 4, 2), (4, 5, 1), (5, 3, 2), (5, 4, 1)
+]
+
+# =============================================================================
+# PAGE CONFIG & THEME
+# =============================================================================
 st.set_page_config(
-    page_title="PL-Kameratene",
+    page_title=PAGE_TITLE,
     page_icon="⚽",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Custom CSS for modern dark-mode sports analytics style
-st.markdown("""
+st.markdown(
+    """
     <style>
-    .main {
-        background-color: #0E1117;
-        color: #FFFFFF;
-    }
+    .main { background-color: #0E1117; color: #FFFFFF; }
     .stMetric {
         background-color: #1E222D;
         padding: 15px;
@@ -29,229 +68,305 @@ st.markdown("""
         background-color: #161922;
         border-right: 1px solid #2B313E;
     }
-    
-    /* Style sidebar header button to look like a prominent, larger title */
     div[data-testid="stSidebar"] button[kind="tertiary"] {
         padding: 5px 0px !important;
         text-align: left !important;
         justify-content: flex-start !important;
     }
-    
     div[data-testid="stSidebar"] button[kind="tertiary"] p {
-        font-size: 32px !important;       /* Larger title font size */
-        font-weight: 900 !important;       /* Extra bold */
-        color: #00FF7F !important;          /* FPL Accent Green */
+        font-size: 28px !important;
+        font-weight: 900 !important;
+        color: #00FF7F !important;
         letter-spacing: -0.5px !important;
         line-height: 1.2 !important;
     }
     </style>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
-# Initialize navigation & persistent transfer state
-if "menu_selection" not in st.session_state:
-    st.session_state.menu_selection = "📊 Dashboard Overview"
+# =============================================================================
+# SESSION STATE
+# =============================================================================
+defaults = {
+    "menu_selection": "📊 Dashboard Overview",
+    "bank_balance": 0.0,
+    "custom_squad_ids": None,
+    "planned_transfers": [],
+    "free_transfers": 1,
+    "manager_meta": {},
+    "use_official_squad": True,
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-if "bank_balance" not in st.session_state:
-    st.session_state.bank_balance = 1.0  # £1.0m default ITB
+# =============================================================================
+# HTTP HELPERS
+# =============================================================================
+def make_session() -> requests.Session:
+    session = requests.Session()
+    retries = Retry(total=3, backoff_factor=0.6, status_forcelist=[429, 500, 502, 503, 504])
+    session.mount("https://", HTTPAdapter(max_retries=retries))
+    session.headers.update(HEADERS)
+    return session
 
-if "custom_squad_ids" not in st.session_state:
-    st.session_state.custom_squad_ids = None
+SESSION = make_session()
 
-if "planned_transfers" not in st.session_state:
-    st.session_state.planned_transfers = []
-
-# --- API DATA FETCHING ---
-@st.cache_data(ttl=3600)
-def load_fpl_bootstrap():
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    url = "https://fantasy.premierleague.com/api/bootstrap-static/"
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        return response.json()
-    return None
-
-@st.cache_data(ttl=3600)
-def load_fpl_fixtures():
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    url = "https://fantasy.premierleague.com/api/fixtures/"
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        return response.json()
-    return []
-
-def fetch_user_squad(manager_id, current_gw):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    gw = max(1, current_gw)
-    
-    entry_url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/"
-    entry_res = requests.get(entry_url, headers=headers)
-    if entry_res.status_code != 200:
+@st.cache_data(ttl=CACHE_TTL, show_spinner="Loading FPL bootstrap…")
+def load_fpl_bootstrap() -> Optional[dict]:
+    try:
+        r = SESSION.get(f"{FPL_BASE}/bootstrap-static/", timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        st.error(f"Bootstrap fetch failed: {e}")
         return None
-        
-    picks_url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/{gw}/picks/"
-    response = requests.get(picks_url, headers=headers)
-    
-    if response.status_code == 404 and gw > 1:
-        picks_url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/{gw - 1}/picks/"
-        response = requests.get(picks_url, headers=headers)
-        
-    if response.status_code == 200:
-        return response.json()
-        
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner="Loading fixtures…")
+def load_fpl_fixtures() -> list:
+    try:
+        r = SESSION.get(f"{FPL_BASE}/fixtures/", timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return []
+
+@st.cache_data(ttl=300)
+def fetch_entry(manager_id: str) -> Optional[dict]:
+    try:
+        r = SESSION.get(f"{FPL_BASE}/entry/{manager_id}/", timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
     return None
 
-# Load base data
+@st.cache_data(ttl=300)
+def fetch_entry_history(manager_id: str) -> Optional[dict]:
+    try:
+        r = SESSION.get(f"{FPL_BASE}/entry/{manager_id}/history/", timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return None
+
+@st.cache_data(ttl=300)
+def fetch_user_picks(manager_id: str, gw: int) -> Optional[dict]:
+    """Try current GW, then previous if 404 (pre-deadline / early season)."""
+    for try_gw in (gw, max(1, gw - 1)):
+        try:
+            r = SESSION.get(
+                f"{FPL_BASE}/entry/{manager_id}/event/{try_gw}/picks/", timeout=10
+            )
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            continue
+    return None
+
+# =============================================================================
+# DATA LOADING & PROCESSING
+# =============================================================================
 raw_data = load_fpl_bootstrap()
 fixtures_data = load_fpl_fixtures()
 
 if not raw_data:
-    st.error("⚠️ Failed to load data from official FPL API. Please refresh or try again later.")
+    st.error("⚠️ Failed to load data from official FPL API. Please refresh later.")
     st.stop()
 
-# --- DATA PROCESSING ---
-players_df = pd.DataFrame(raw_data['elements'])
-teams_df = pd.DataFrame(raw_data['teams'])
-positions_df = pd.DataFrame(raw_data['element_types'])
-events_df = pd.DataFrame(raw_data['events'])
+players_df = pd.DataFrame(raw_data["elements"])
+teams_df = pd.DataFrame(raw_data["teams"])
+positions_df = pd.DataFrame(raw_data["element_types"])
+events_df = pd.DataFrame(raw_data["events"])
 
-# Find current gameweek
+# Current / next GW
 current_gw = 1
+next_gw = 1
 for _, event in events_df.iterrows():
-    if event['is_current']:
-        current_gw = event['id']
+    if event.get("is_current"):
+        current_gw = int(event["id"])
+        next_gw = current_gw
         break
-    elif event['is_next']:
-        current_gw = max(1, event['id'] - 1)
+    if event.get("is_next"):
+        next_gw = int(event["id"])
+        current_gw = max(1, next_gw - 1)
         break
 
-# Mappings
-team_map = dict(zip(teams_df['id'], teams_df['name']))
-team_short_map = dict(zip(teams_df['id'], teams_df['short_name']))
-pos_map = dict(zip(positions_df['id'], positions_df['singular_name_short']))
+team_map = dict(zip(teams_df["id"], teams_df["name"]))
+team_short_map = dict(zip(teams_df["id"], teams_df["short_name"]))
+pos_map = dict(zip(positions_df["id"], positions_df["singular_name_short"]))
 
-players_df['team_name'] = players_df['team'].map(team_map)
-players_df['team_short'] = players_df['team'].map(team_short_map)
-players_df['position'] = players_df['element_type'].map(pos_map)
-players_df['now_cost'] = players_df['now_cost'] / 10.0
-players_df['selected_by_percent'] = pd.to_numeric(players_df['selected_by_percent'], errors='coerce').fillna(0.0)
+players_df["team_name"] = players_df["team"].map(team_map)
+players_df["team_short"] = players_df["team"].map(team_short_map)
+players_df["position"] = players_df["element_type"].map(pos_map)
+players_df["now_cost"] = players_df["now_cost"] / 10.0
+players_df["selected_by_percent"] = (
+    pd.to_numeric(players_df["selected_by_percent"], errors="coerce").fillna(0.0)
+)
 
-# Clean FPL stats
-players_df['expected_goals'] = pd.to_numeric(players_df.get('expected_goals', 0), errors='coerce').fillna(0.0)
-players_df['expected_assists'] = pd.to_numeric(players_df.get('expected_assists', 0), errors='coerce').fillna(0.0)
-players_df['expected_goal_involvements'] = pd.to_numeric(players_df.get('expected_goal_involvements', 0), errors='coerce').fillna(0.0)
-players_df['expected_goals_conceded'] = pd.to_numeric(players_df.get('expected_goals_conceded', 0), errors='coerce').fillna(0.0)
-players_df['minutes'] = pd.to_numeric(players_df['minutes'], errors='coerce').fillna(0)
-players_df['games_played'] = (players_df['minutes'] / 90.0).clip(lower=1.0)
-players_df['avg_minutes'] = players_df['minutes'] / players_df['games_played']
-players_df['ep_next'] = pd.to_numeric(players_df['ep_next'], errors='coerce').fillna(0.0)
+# Core stats
+for col in [
+    "expected_goals", "expected_assists", "expected_goal_involvements",
+    "expected_goals_conceded", "minutes", "ep_next", "ep_this",
+    "chance_of_playing_next_round", "form", "points_per_game",
+]:
+    players_df[col] = pd.to_numeric(players_df.get(col, 0), errors="coerce").fillna(0.0)
 
-# Build dynamic team fixture dictionary (GW1–GW38 supported)
-team_fixtures = {}
-team_fixture_details = {}  # Detailed info for visual representation
+players_df["games_played"] = (players_df["minutes"] / 90.0).clip(lower=0.5)
+players_df["avg_minutes"] = players_df["minutes"] / players_df["games_played"]
+players_df["xgi_p90"] = players_df["expected_goal_involvements"] / players_df["games_played"]
+
+players_df["display_label"] = (
+    players_df["web_name"]
+    + " (" + players_df["team_short"] + ") – £"
+    + players_df["now_cost"].astype(str) + "m"
+)
+
+# Fixtures → FDR + opponent info
+team_fixtures: Dict[int, Dict[int, int]] = {}
+team_fixture_details: Dict[int, Dict[int, dict]] = {}
+
 for f in fixtures_data:
-    gw = f.get('event')
-    if gw:
-        home_team_id = f['team_h']
-        away_team_id = f['team_a']
-        home_fdr = f['team_h_difficulty']
-        away_fdr = f['team_a_difficulty']
+    gw = f.get("event")
+    if not gw:
+        continue
+    h, a = f["team_h"], f["team_a"]
+    team_fixtures.setdefault(h, {})[gw] = f["team_h_difficulty"]
+    team_fixtures.setdefault(a, {})[gw] = f["team_a_difficulty"]
+    team_fixture_details.setdefault(h, {})[gw] = {
+        "opponent": team_short_map.get(a, "UNK"),
+        "venue": "H",
+        "fdr": f["team_h_difficulty"],
+    }
+    team_fixture_details.setdefault(a, {})[gw] = {
+        "opponent": team_short_map.get(h, "UNK"),
+        "venue": "A",
+        "fdr": f["team_a_difficulty"],
+    }
 
-        # Store FDR values
-        team_fixtures.setdefault(home_team_id, {})[gw] = home_fdr
-        team_fixtures.setdefault(away_team_id, {})[gw] = away_fdr
+# =============================================================================
+# VECTORIZED xP MODEL
+# =============================================================================
+def compute_xp_matrix(df: pd.DataFrame, max_gw: int = MAX_GW_HORIZON) -> pd.DataFrame:
+    """Return df with GW1_xP … GWmax_xP columns. Vectorized."""
+    out = df.copy()
+    base_ep = out["ep_next"].fillna(0.0)
+    xgi_bonus = out["position"].map(XGI_WEIGHT).fillna(0.0) * out["xgi_p90"]
+    blended = EP_BLEND * base_ep + (1 - EP_BLEND) * (base_ep + xgi_bonus)
 
-        # Store visual metadata: Opponent Short Name + Home/Away designator
-        team_fixture_details.setdefault(home_team_id, {})[gw] = {
-            'opponent': team_short_map.get(away_team_id, 'UNK'),
-            'venue': 'H',
-            'fdr': home_fdr
-        }
-        team_fixture_details.setdefault(away_team_id, {})[gw] = {
-            'opponent': team_short_map.get(home_team_id, 'UNK'),
-            'venue': 'A',
-            'fdr': away_fdr
-        }
+    # Minutes / availability scale
+    mins_scale = (out["avg_minutes"] / MINUTES_THRESHOLD).clip(0.25, 1.0)
+    chance = out["chance_of_playing_next_round"].replace(0, 100) / 100.0
+    chance = chance.fillna(1.0).clip(0.3, 1.0)
+    scale = mins_scale * chance
 
-# --- ENHANCED & CALIBRATED UNIQUE XP MODEL WITH UPDATED FDR ---
-for gw in range(1, 11):
-    def calculate_gw_xp(row, target_gw=gw):
-        base_ep = row['ep_next']
-        games = max(row['games_played'], 1.0)
-        xgi_per_90 = row['expected_goal_involvements'] / games
-        
-        pos = row['position']
-        if pos in ['MID', 'FWD']:
-            individual_delta = xgi_per_90 * 1.8
-        elif pos == 'DEF':
-            individual_delta = xgi_per_90 * 1.2
-        else:  # GKP
-            individual_delta = 0.0
+    unadj = blended * scale
 
-        avg_mins = row['avg_minutes']
-        minute_scale = 1.0 if avg_mins >= 60 else (avg_mins / 60.0)
+    for gw in range(1, max_gw + 1):
+        fdr_series = out["team"].map(
+            lambda t: team_fixtures.get(t, {}).get(gw, 3)
+        )
+        modifier = 1.0 + (3 - fdr_series) * FDR_WEIGHT
+        out[f"GW{gw}_xP"] = (unadj * modifier).clip(lower=0).round(2)
 
-        unadjusted_xp = (base_ep + individual_delta) * minute_scale
+    return out
 
-        team_id = row['team']
-        fdr = team_fixtures.get(team_id, {}).get(target_gw, 3)
-        fixture_modifier = 1.0 + ((3 - fdr) * 0.10)
-        
-        return round(max(0.0, unadjusted_xp * fixture_modifier), 2)
+players_df = compute_xp_matrix(players_df)
 
-    players_df[f'GW{gw}_xP'] = players_df.apply(calculate_gw_xp, axis=1)
-
-players_df['display_label'] = players_df['web_name'] + " (" + players_df['team_short'] + ") - £" + players_df['now_cost'].astype(str) + "m"
-
-# --- SIDEBAR CONTROLS ---
+# =============================================================================
+# SIDEBAR
+# =============================================================================
 if st.sidebar.button("⚽ PL-Kameratene", type="tertiary", use_container_width=True):
     st.session_state.menu_selection = "📊 Dashboard Overview"
     st.rerun()
 
-st.sidebar.markdown(f"**Current Gameweek:** GW{current_gw}")
+st.sidebar.markdown(f"**Current / Next GW:** {current_gw} → {next_gw}")
 
-selected_gw = st.sidebar.selectbox(
-    "🎯 Select Target Gameweek", 
-    options=[f"GW{i}" for i in range(1, 11)],
-    index=0
+selected_gw_label = st.sidebar.selectbox(
+    "🎯 Target Gameweek",
+    options=[f"GW{i}" for i in range(1, MAX_GW_HORIZON + 1)],
+    index=min(max(next_gw - 1, 0), MAX_GW_HORIZON - 1),
 )
+selected_gw_col = f"{selected_gw_label}_xP"
+selected_gw_num = int(selected_gw_label.replace("GW", ""))
+players_df["xP"] = players_df[selected_gw_col]
 
-selected_gw_col = f"{selected_gw}_xP"
-players_df['xP'] = players_df[selected_gw_col]
-
-# Synchronized navigation menu
 menu_options = [
-    "📊 Dashboard Overview", 
-    "🛡️ My Squad & Pitch View", 
+    "📊 Dashboard Overview",
+    "🛡️ My Squad & Pitch View",
     "🔄 Transfer Planner",
-    "🔍 Player Explorer & Differentials"
+    "🔍 Player Explorer & Differentials",
 ]
-
 menu = st.sidebar.radio(
-    "Navigation", 
+    "Navigation",
     options=menu_options,
-    index=menu_options.index(st.session_state.menu_selection) if st.session_state.menu_selection in menu_options else 0,
-    key="nav_radio"
+    index=menu_options.index(st.session_state.menu_selection)
+    if st.session_state.menu_selection in menu_options
+    else 0,
+    key="nav_radio",
 )
-
 st.session_state.menu_selection = menu
 
 st.sidebar.markdown("---")
-manager_id_input = st.sidebar.text_input("Enter FPL Manager ID", value="475093")
-use_manual_picker = st.sidebar.checkbox("🛠️ Pre-Season Pitch Builder", value=True)
+manager_id_input = st.sidebar.text_input("FPL Manager ID", value=DEFAULT_MANAGER_ID)
+use_manual = st.sidebar.checkbox(
+    "🛠️ Manual / Pre-Season Builder",
+    value=not st.session_state.use_official_squad,
+)
 
-# --- RE-ENGINEERED FPL PITCH VISUALIZER ---
-def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
+if st.sidebar.button("🔄 Reset to Official Picks"):
+    st.session_state.custom_squad_ids = None
+    st.session_state.use_official_squad = True
+    st.session_state.planned_transfers = []
+    st.rerun()
+
+# Load manager data
+entry = fetch_entry(manager_id_input) if manager_id_input else None
+history = fetch_entry_history(manager_id_input) if manager_id_input else None
+picks_data = fetch_user_picks(manager_id_input, current_gw) if manager_id_input else None
+
+if entry:
+    st.session_state.manager_meta = {
+        "name": f"{entry.get('player_first_name', '')} {entry.get('player_last_name', '')}".strip(),
+        "team_name": entry.get("name", ""),
+        "overall_rank": entry.get("summary_overall_rank"),
+        "overall_points": entry.get("summary_overall_points"),
+        "last_deadline_bank": entry.get("last_deadline_bank", 0) / 10.0,
+        "last_deadline_value": entry.get("last_deadline_value", 0) / 10.0,
+    }
+    # Prefer live-ish bank from picks entry_history
+    if picks_data and "entry_history" in picks_data:
+        eh = picks_data["entry_history"]
+        bank = eh.get("bank", entry.get("last_deadline_bank", 0)) / 10.0
+        st.session_state.bank_balance = bank
+    else:
+        st.session_state.bank_balance = st.session_state.manager_meta["last_deadline_bank"]
+
+# Chips summary
+chips_used = []
+if history and "chips" in history:
+    chips_used = [c.get("name") for c in history["chips"]]
+
+st.sidebar.markdown("---")
+if entry:
+    st.sidebar.caption(
+        f"**{st.session_state.manager_meta.get('name', 'Manager')}**  \n"
+        f"{st.session_state.manager_meta.get('team_name', '')}  \n"
+        f"OR: {st.session_state.manager_meta.get('overall_rank', '–')}  \n"
+        f"Pts: {st.session_state.manager_meta.get('overall_points', '–')}"
+    )
+    if chips_used:
+        st.sidebar.caption("Chips used: " + ", ".join(chips_used))
+
+# =============================================================================
+# PITCH VISUALIZER (unchanged core, minor polish)
+# =============================================================================
+def generate_fpl_pitch(starting_11_df: pd.DataFrame, bench_df: pd.DataFrame, captain_id: int):
     fig = go.Figure()
-
-    fig.add_shape(type="rect", x0=0, y0=20, x1=100, y1=140, 
+    fig.add_shape(type="rect", x0=0, y0=20, x1=100, y1=140,
                   fillcolor="#0a1a12", line=dict(color="#1f422e", width=2))
-    
     fig.add_shape(type="rect", x0=4, y0=24, x1=96, y1=136, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="line", x0=4, y0=80, x1=96, y1=80, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
@@ -260,40 +375,33 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
     fig.add_shape(type="rect", x0=36, y0=24, x1=64, y1=31, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="rect", x0=22, y0=115, x1=78, y1=136, line=dict(color="#2e6345", width=2))
     fig.add_shape(type="rect", x0=36, y0=129, x1=64, y1=136, line=dict(color="#2e6345", width=2))
-
-    fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=18, 
+    fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=18,
                   fillcolor="#060c08", line=dict(color="#1f422e", width=1.5))
-    fig.add_annotation(x=4, y=15.5, text="<b>SUBSTITUTES BENCH</b>", showarrow=False, 
+    fig.add_annotation(x=4, y=15.5, text="<b>SUBSTITUTES BENCH</b>", showarrow=False,
                        font=dict(color="#5a826b", size=10, family="Arial"), xanchor="left")
 
-    pos_y_map = {'GKP': 32, 'DEF': 58, 'MID': 88, 'FWD': 118}
+    pos_y_map = {"GKP": 32, "DEF": 58, "MID": 88, "FWD": 118}
 
     def render_player(x, y, player, is_bench=False):
-        is_captain = (player['id'] == captain_id) and not is_bench
-        
+        is_captain = (player["id"] == captain_id) and not is_bench
         card_bg = "#1f1800" if is_captain else "#11161d"
         card_border = "#FFD700" if is_captain else "#2B313E"
         pts_color = "#FFD700" if is_captain else "#00FF7F"
         node_bg = "#FFD700" if is_captain else "#37003c"
-        
         capt_badge = " <b style='color:#FFD700;'>(C)</b>" if is_captain else ""
-        
+
         fig.add_trace(go.Scatter(
             x=[x], y=[y],
             mode="markers+text",
-            marker=dict(
-                size=22 if not is_bench else 16, 
-                color=node_bg, 
-                line=dict(width=2, color=card_border)
-            ),
+            marker=dict(size=22 if not is_bench else 16, color=node_bg,
+                        line=dict(width=2, color=card_border)),
             text=["<b>C</b>" if is_captain else ""],
             textposition="middle center",
-            textfont=dict(color="#000000" if is_captain else "#FFFFFF", size=11, family="Arial"),
+            textfont=dict(color="#000000" if is_captain else "#FFFFFF", size=11),
             hoverinfo="text",
-            hovertext=f"{player['web_name']} (£{player['now_cost']}m) - {player['xP']} pts",
-            showlegend=False
+            hovertext=f"{player['web_name']} (£{player['now_cost']}m) – {player['xP']} pts",
+            showlegend=False,
         ))
-
         card_text = (
             f"<b>{player['web_name']}</b>{capt_badge}<br>"
             f"<span style='color:{pts_color}; font-weight:bold;'>{player['xP']} pts</span>"
@@ -302,24 +410,16 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
             f"<b>{player['web_name']}</b><br>"
             f"<span style='color:#00FF7F;'>{player['xP']} pts</span>"
         )
-
         fig.add_annotation(
-            x=x, y=y,
-            yshift=-32 if not is_bench else -24,
-            text=card_text,
-            showarrow=False,
-            font=dict(family="Arial", size=10),
-            align="center",
-            bgcolor=card_bg,
-            bordercolor=card_border,
-            borderwidth=1,
-            borderpad=3
+            x=x, y=y, yshift=-32 if not is_bench else -24,
+            text=card_text, showarrow=False,
+            font=dict(family="Arial", size=10), align="center",
+            bgcolor=card_bg, bordercolor=card_border, borderwidth=1, borderpad=3,
         )
 
     for pos, y_val in pos_y_map.items():
-        pos_players = starting_11_df[starting_11_df['position'] == pos]
+        pos_players = starting_11_df[starting_11_df["position"] == pos]
         count = len(pos_players)
-        
         if count > 0:
             x_coords = [8 + (84 * (i + 1) / (count + 1)) for i in range(count)]
             for idx, (_, player) in enumerate(pos_players.iterrows()):
@@ -327,462 +427,392 @@ def generate_fpl_pitch(starting_11_df, bench_df, target_gw, captain_id):
 
     if not bench_df.empty:
         b_count = len(bench_df)
-        b_x_coords = [10 + (80 * (i + 1) / (b_count + 1)) for i in range(b_count)]
+        b_x = [10 + (80 * (i + 1) / (b_count + 1)) for i in range(b_count)]
         for idx, (_, player) in enumerate(bench_df.iterrows()):
-            render_player(b_x_coords[idx], 8, player, is_bench=True)
+            render_player(b_x[idx], 8, player, is_bench=True)
 
     fig.update_layout(
         xaxis=dict(range=[-2, 102], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
-        yaxis=dict(
-            range=[-2, 142], 
-            showgrid=False, 
-            zeroline=False, 
-            showticklabels=False, 
-            fixedrange=True,
-            scaleanchor="x",
-            scaleratio=1.28
-        ),
-        height=800,
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="#0E1117",
-        paper_bgcolor="#0E1117"
+        yaxis=dict(range=[-2, 142], showgrid=False, zeroline=False, showticklabels=False,
+                   fixedrange=True, scaleanchor="x", scaleratio=1.28),
+        height=800, margin=dict(l=10, r=10, t=10, b=10),
+        plot_bgcolor="#0E1117", paper_bgcolor="#0E1117",
     )
     return fig
 
-# --- DASHBOARD OVERVIEW PAGE ---
+# =============================================================================
+# HELPER: best legal starting XI by xP
+# =============================================================================
+def select_best_xi(squad_df: pd.DataFrame, xp_col: str = "xP") -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return (starting_11, bench) using a legal formation that maximises xP."""
+    if squad_df.empty or len(squad_df) < 11:
+        return squad_df, pd.DataFrame()
+
+    gkp = squad_df[squad_df["position"] == "GKP"].sort_values(xp_col, ascending=False)
+    defs = squad_df[squad_df["position"] == "DEF"].sort_values(xp_col, ascending=False)
+    mids = squad_df[squad_df["position"] == "MID"].sort_values(xp_col, ascending=False)
+    fwds = squad_df[squad_df["position"] == "FWD"].sort_values(xp_col, ascending=False)
+
+    best_score = -1
+    best_xi = None
+
+    for n_def, n_mid, n_fwd in LEGAL_FORMATIONS:
+        if len(defs) < n_def or len(mids) < n_mid or len(fwds) < n_fwd or len(gkp) < 1:
+            continue
+        xi = pd.concat([
+            gkp.head(1),
+            defs.head(n_def),
+            mids.head(n_mid),
+            fwds.head(n_fwd),
+        ])
+        score = xi[xp_col].sum()
+        if score > best_score:
+            best_score = score
+            best_xi = xi
+
+    if best_xi is None:
+        # fallback: highest xP 11
+        best_xi = squad_df.sort_values(xp_col, ascending=False).head(11)
+
+    bench = squad_df[~squad_df["id"].isin(best_xi["id"])]
+    return best_xi, bench
+
+# =============================================================================
+# DASHBOARD
+# =============================================================================
 if menu == "📊 Dashboard Overview":
-    st.title(f"📊 PL-Kameratene Dashboard ({selected_gw})")
+    st.title(f"📊 PL-Kameratene Dashboard ({selected_gw_label})")
 
-    col_gkp, col_def, col_mid, col_fwd = st.columns(4)
-    
-    top_gkp = players_df[players_df['position'] == 'GKP'].sort_values(by='xP', ascending=False).iloc[0]
-    top_def = players_df[players_df['position'] == 'DEF'].sort_values(by='xP', ascending=False).iloc[0]
-    top_mid = players_df[players_df['position'] == 'MID'].sort_values(by='xP', ascending=False).iloc[0]
-    top_fwd = players_df[players_df['position'] == 'FWD'].sort_values(by='xP', ascending=False).iloc[0]
-
-    col_gkp.metric("🧤 Top Goalkeeper", top_gkp['web_name'], f"{top_gkp['xP']} pts")
-    col_def.metric("🛡️ Top Defender", top_def['web_name'], f"{top_def['xP']} pts")
-    col_mid.metric("⚙️ Top Midfielder", top_mid['web_name'], f"{top_mid['xP']} pts")
-    col_fwd.metric("🎯 Top Forward", top_fwd['web_name'], f"{top_fwd['xP']} pts")
+    cols = st.columns(4)
+    for pos, col, emoji in zip(
+        ["GKP", "DEF", "MID", "FWD"], cols, ["🧤", "🛡️", "⚙️", "🎯"]
+    ):
+        top = players_df[players_df["position"] == pos].sort_values("xP", ascending=False).iloc[0]
+        col.metric(f"{emoji} Top {pos}", top["web_name"], f"{top['xP']} pts")
 
     st.markdown("---")
-    st.subheader(f"🚀 Top 15 Projected Scorers for {selected_gw}")
-    st.caption("👇 Select a player from the dropdown or click a bar in the chart to inspect stats!")
-
-    top_15 = players_df.sort_values(by='xP', ascending=False).head(15).copy()
+    st.subheader(f"🚀 Top 15 Projected Scorers — {selected_gw_label}")
+    top_15 = players_df.sort_values("xP", ascending=False).head(15).copy()
 
     fig = px.bar(
-        top_15, x='web_name', y='xP', color='position', text='xP', template='plotly_dark',
-        hover_data=['team_name', 'now_cost', 'selected_by_percent'],
-        color_discrete_map={'GKP': '#FFD700', 'DEF': '#00BFFF', 'MID': '#00FF7F', 'FWD': '#FF4500'}
+        top_15, x="web_name", y="xP", color="position", text="xP",
+        template="plotly_dark",
+        hover_data=["team_name", "now_cost", "selected_by_percent"],
+        color_discrete_map={"GKP": "#FFD700", "DEF": "#00BFFF", "MID": "#00FF7F", "FWD": "#FF4500"},
     )
-    fig.update_traces(texttemplate='%{text}', textposition='outside')
-    fig.update_layout(xaxis_title="Player", yaxis_title=f"Expected Points in {selected_gw}", height=450)
-    
-    chart_selection = st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode="points")
+    fig.update_traces(texttemplate="%{text}", textposition="outside")
+    fig.update_layout(xaxis_title="Player", yaxis_title=f"xP ({selected_gw_label})", height=450)
+    st.plotly_chart(fig, use_container_width=True)
 
-    selected_player_name = None
-    if chart_selection and "selection" in chart_selection and chart_selection["selection"]["points"]:
-        point_data = chart_selection["selection"]["points"][0]
-        selected_player_name = point_data.get("x")
-        
-    col_select, _ = st.columns([1, 2])
-    with col_select:
-        chosen_player = st.selectbox(
-            "🔍 Inspect Player Stats:",
-            options=top_15['web_name'].tolist(),
-            index=top_15['web_name'].tolist().index(selected_player_name) if selected_player_name in top_15['web_name'].tolist() else 0
-        )
+    chosen = st.selectbox("🔍 Inspect Player", options=top_15["web_name"].tolist())
+    p = players_df[players_df["web_name"] == chosen].iloc[0]
 
-    p_data = players_df[players_df['web_name'] == chosen_player].iloc[0]
-    
-    st.markdown(f"### 📋 {p_data['web_name']} ({p_data['team_name']}) — Performance Stats")
-    
+    st.markdown(f"### 📋 {p['web_name']} ({p['team_name']})")
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Position", p_data['position'])
-    c2.metric("Cost", f"£{p_data['now_cost']}m")
-    c3.metric(f"Projected xP ({selected_gw})", f"{p_data['xP']} pts")
-    c4.metric("Avg Minutes", f"{int(p_data['avg_minutes'])} mins")
-    c5.metric("Ownership", f"{p_data['selected_by_percent']}%")
+    c1.metric("Position", p["position"])
+    c2.metric("Cost", f"£{p['now_cost']}m")
+    c3.metric(f"xP ({selected_gw_label})", f"{p['xP']} pts")
+    c4.metric("Avg Minutes", f"{int(p['avg_minutes'])}")
+    c5.metric("Ownership", f"{p['selected_by_percent']}%")
 
-    st.markdown("#### 📊 Official FPL Metrics Breakdown")
-    
-    fpl_stats_table = pd.DataFrame([{
-        f"xP ({selected_gw})": p_data[selected_gw_col],
-        "Official ep_next": p_data.get('ep_next', 0),
-        "GS": p_data.get('goals_scored', 0),
-        "A": p_data.get('assists', 0),
-        "xG": f"{p_data.get('expected_goals', 0):.2f}",
-        "xA": f"{p_data.get('expected_assists', 0):.2f}",
-        "xGI": f"{p_data.get('expected_goal_involvements', 0):.2f}",
-        "CS": p_data.get('clean_sheets', 0),
-        "GC": p_data.get('goals_conceded', 0),
-        "xGC": f"{p_data.get('expected_goals_conceded', 0):.2f}",
-        "S": p_data.get('saves', 0),
-        "BP": p_data.get('bonus', 0),
-        "BPS": p_data.get('bps', 0),
-        "I": p_data.get('influence', 0),
-        "C": p_data.get('creativity', 0),
-        "T": p_data.get('threat', 0),
-        "YC": p_data.get('yellow_cards', 0),
-        "RC": p_data.get('red_cards', 0),
-        "OG": p_data.get('own_goals', 0),
-        "PM": p_data.get('penalties_missed', 0),
-        "PS": p_data.get('penalties_saved', 0)
+    st.markdown("#### Official + Model Metrics")
+    stats = pd.DataFrame([{
+        f"Model xP ({selected_gw_label})": p[selected_gw_col],
+        "Official ep_next": p["ep_next"],
+        "xGI p90": round(p["xgi_p90"], 2),
+        "Form": p["form"],
+        "Minutes": int(p["minutes"]),
+        "xG": f"{p['expected_goals']:.2f}",
+        "xA": f"{p['expected_assists']:.2f}",
+        "xGI": f"{p['expected_goal_involvements']:.2f}",
+        "CS": p.get("clean_sheets", 0),
+        "GC": p.get("goals_conceded", 0),
+        "Bonus": p.get("bonus", 0),
     }])
-    
-    st.dataframe(fpl_stats_table, use_container_width=True, hide_index=True)
+    st.dataframe(stats, use_container_width=True, hide_index=True)
 
-    # Selected Player GW1 - GW10 xP Timeline
-    st.markdown(f"#### 🗓️ Projected Expected Points (GW1 – GW10) for {p_data['web_name']}")
-    gw_cols = [f'GW{i}_xP' for i in range(1, 11)]
-    player_gw_table = pd.DataFrame([p_data[gw_cols].to_dict()])
-    player_gw_table.columns = [f"GW{i}" for i in range(1, 11)]
-    st.dataframe(player_gw_table, use_container_width=True, hide_index=True)
+    st.markdown(f"#### 🗓️ xP Timeline (GW1–GW{MAX_GW_HORIZON})")
+    gw_cols = [f"GW{i}_xP" for i in range(1, MAX_GW_HORIZON + 1)]
+    timeline = pd.DataFrame([p[gw_cols].to_dict()])
+    timeline.columns = [f"GW{i}" for i in range(1, MAX_GW_HORIZON + 1)]
+    st.dataframe(timeline, use_container_width=True, hide_index=True)
 
-    # Top 15 Overall Matrix (GW1 – GW10)
     st.markdown("---")
-    st.subheader("📅 Top 15 Players — Expected Points Matrix (GW1 – GW10)")
-    matrix_cols = ['web_name', 'position', 'team_short', 'now_cost'] + gw_cols
-    xp_matrix = top_15[matrix_cols].copy()
-    xp_matrix.columns = ['Player', 'Pos', 'Team', 'Cost (£m)'] + [f'GW{i}' for i in range(1, 11)]
-    st.dataframe(xp_matrix, use_container_width=True, hide_index=True)
+    st.subheader(f"📅 Top 15 — xP Matrix (GW1–GW{MAX_GW_HORIZON})")
+    matrix = top_15[["web_name", "position", "team_short", "now_cost"] + gw_cols].copy()
+    matrix.columns = ["Player", "Pos", "Team", "Cost"] + [f"GW{i}" for i in range(1, MAX_GW_HORIZON + 1)]
+    st.dataframe(matrix, use_container_width=True, hide_index=True)
 
-# --- SQUAD & PITCH VIEW PAGE ---
+# =============================================================================
+# SQUAD & PITCH
+# =============================================================================
 elif menu == "🛡️ My Squad & Pitch View":
     st.title("🛡️ My Squad, Bench & Pitch View")
 
     starting_11 = pd.DataFrame()
     bench_df = pd.DataFrame()
+    official_ids = []
 
-    if use_manual_picker:
-        st.info("💡 **Pre-Season Mode:** Pick your squad below!")
-        
-        gkps = players_df[players_df['position'] == 'GKP']
-        defs = players_df[players_df['position'] == 'DEF']
-        mids = players_df[players_df['position'] == 'MID']
-        fwds = players_df[players_df['position'] == 'FWD']
+    if picks_data:
+        official_ids = [p["element"] for p in picks_data.get("picks", [])]
 
-        col_gkp, col_def, col_mid, col_fwd = st.columns(4)
+    if use_manual or not official_ids:
+        st.info("💡 Manual / Pre-Season mode — pick your 15-man squad.")
+        gkps = players_df[players_df["position"] == "GKP"].sort_values("now_cost")
+        defs = players_df[players_df["position"] == "DEF"].sort_values("now_cost")
+        mids = players_df[players_df["position"] == "MID"].sort_values("now_cost")
+        fwds = players_df[players_df["position"] == "FWD"].sort_values("now_cost")
 
-        with col_gkp:
-            st.markdown("### 🧤 Goalkeepers (2)")
-            selected_gkps = st.multiselect("GKP", options=gkps['id'].tolist(), default=gkps['id'].tolist()[:2], format_func=lambda x: gkps[gkps['id']==x]['display_label'].values[0], max_selections=2)
-            
-        with col_def:
-            st.markdown("### 🛡️ Defenders (5)")
-            selected_defs = st.multiselect("DEF", options=defs['id'].tolist(), default=defs['id'].tolist()[:5], format_func=lambda x: defs[defs['id']==x]['display_label'].values[0], max_selections=5)
+        # Sensible cheap defaults
+        default_gkp = gkps.head(2)["id"].tolist()
+        default_def = defs.head(5)["id"].tolist()
+        default_mid = mids.head(5)["id"].tolist()
+        default_fwd = fwds.head(3)["id"].tolist()
 
-        with col_mid:
-            st.markdown("### ⚙️ Midfielders (5)")
-            selected_mids = st.multiselect("MID", options=mids['id'].tolist(), default=mids['id'].tolist()[:5], format_func=lambda x: mids[mids['id']==x]['display_label'].values[0], max_selections=5)
-
-        with col_fwd:
-            st.markdown("### 🎯 Forwards (3)")
-            selected_fwds = st.multiselect("FWD", options=fwds['id'].tolist(), default=fwds['id'].tolist()[:3], format_func=lambda x: fwds[fwds['id']==x]['display_label'].values[0], max_selections=3)
-
-        all_selected_ids = selected_gkps + selected_defs + selected_mids + selected_fwds
-        
-        if st.session_state.custom_squad_ids:
-            all_selected_ids = st.session_state.custom_squad_ids
-            
-        full_squad = players_df[players_df['id'].isin(all_selected_ids)].copy()
-
-        if len(full_squad) >= 11:
-            gkp_sorted = full_squad[full_squad['position'] == 'GKP'].sort_values(by='xP', ascending=False)
-            def_sorted = full_squad[full_squad['position'] == 'DEF'].sort_values(by='xP', ascending=False)
-            mid_sorted = full_squad[full_squad['position'] == 'MID'].sort_values(by='xP', ascending=False)
-            fwd_sorted = full_squad[full_squad['position'] == 'FWD'].sort_values(by='xP', ascending=False)
-
-            starting_gkp = gkp_sorted.head(1)
-            starting_def = def_sorted.head(min(4, len(def_sorted)))
-            starting_mid = mid_sorted.head(min(4, len(mid_sorted)))
-            starting_fwd = fwd_sorted.head(min(2, len(fwd_sorted)))
-
-            starting_11 = pd.concat([starting_gkp, starting_def, starting_mid, starting_fwd])
-            bench_df = full_squad[~full_squad['id'].isin(starting_11['id'])]
+        if st.session_state.custom_squad_ids and len(st.session_state.custom_squad_ids) == 15:
+            defaults_ids = st.session_state.custom_squad_ids
         else:
-            starting_11 = full_squad
+            defaults_ids = default_gkp + default_def + default_mid + default_fwd
 
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown("### 🧤 GKP (2)")
+            sel_gkp = st.multiselect(
+                "GKP", options=gkps["id"].tolist(),
+                default=[i for i in defaults_ids if i in gkps["id"].values][:2],
+                format_func=lambda x: gkps.loc[gkps["id"] == x, "display_label"].values[0],
+                max_selections=2, key="ms_gkp",
+            )
+        with c2:
+            st.markdown("### 🛡️ DEF (5)")
+            sel_def = st.multiselect(
+                "DEF", options=defs["id"].tolist(),
+                default=[i for i in defaults_ids if i in defs["id"].values][:5],
+                format_func=lambda x: defs.loc[defs["id"] == x, "display_label"].values[0],
+                max_selections=5, key="ms_def",
+            )
+        with c3:
+            st.markdown("### ⚙️ MID (5)")
+            sel_mid = st.multiselect(
+                "MID", options=mids["id"].tolist(),
+                default=[i for i in defaults_ids if i in mids["id"].values][:5],
+                format_func=lambda x: mids.loc[mids["id"] == x, "display_label"].values[0],
+                max_selections=5, key="ms_mid",
+            )
+        with c4:
+            st.markdown("### 🎯 FWD (3)")
+            sel_fwd = st.multiselect(
+                "FWD", options=fwds["id"].tolist(),
+                default=[i for i in defaults_ids if i in fwds["id"].values][:3],
+                format_func=lambda x: fwds.loc[fwds["id"] == x, "display_label"].values[0],
+                max_selections=3, key="ms_fwd",
+            )
+
+        all_ids = sel_gkp + sel_def + sel_mid + sel_fwd
+        if len(all_ids) == 15:
+            st.session_state.custom_squad_ids = all_ids
+        full_squad = players_df[players_df["id"].isin(all_ids)].copy()
     else:
-        if manager_id_input:
-            user_data = fetch_user_squad(manager_id_input, current_gw)
-            if user_data:
-                picks = user_data.get('picks', [])
-                my_player_ids = [p['element'] for p in picks]
-                
-                if st.session_state.custom_squad_ids:
-                    my_player_ids = st.session_state.custom_squad_ids
-                    
-                my_squad_df = players_df[players_df['id'].isin(my_player_ids)].copy()
-                pick_order = {p['element']: p['position'] for p in picks}
-                my_squad_df['squad_order'] = my_squad_df['id'].map(pick_order).fillna(99)
-                my_squad_df = my_squad_df.sort_values(by='squad_order')
-                
-                starting_11 = my_squad_df.head(11)
-                bench_df = my_squad_df.tail(len(my_squad_df) - 11)
+        # Official picks (or previously staged custom)
+        ids = st.session_state.custom_squad_ids or official_ids
+        full_squad = players_df[players_df["id"].isin(ids)].copy()
+        if picks_data and not st.session_state.custom_squad_ids:
+            order = {p["element"]: p["position"] for p in picks_data["picks"]}
+            full_squad["squad_order"] = full_squad["id"].map(order)
+            full_squad = full_squad.sort_values("squad_order")
+
+    if len(full_squad) >= 11:
+        starting_11, bench_df = select_best_xi(full_squad, "xP")
+    else:
+        starting_11 = full_squad
+        bench_df = pd.DataFrame()
 
     if not starting_11.empty:
-        captain_row = starting_11.sort_values(by='xP', ascending=False).iloc[0]
-        captain_id = captain_row['id']
-        
-        total_xp = (starting_11['xP'].sum() + captain_row['xP']).round(2)
-        total_cost = (starting_11['now_cost'].sum() + (bench_df['now_cost'].sum() if not bench_df.empty else 0)).round(1)
-        
-        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-        m_col1.metric("Squad Size", f"{len(starting_11)} Start / {len(bench_df)} Bench")
-        m_col2.metric("Total Squad Cost", f"£{total_cost:.1f}m")
-        m_col3.metric("Captain Pick 👑", captain_row['web_name'], f"{captain_row['xP'] * 2:.1f} pts (x2)")
-        m_col4.metric("Projected GW Points", f"{total_xp:.2f} pts")
+        captain_row = starting_11.sort_values("xP", ascending=False).iloc[0]
+        captain_id = captain_row["id"]
+        total_xp = (starting_11["xP"].sum() + captain_row["xP"]).round(2)
+        total_cost = full_squad["now_cost"].sum().round(1)
 
-        st.subheader(f"🏟️ Pitch & Bench View — {selected_gw}")
-        pitch_fig = generate_fpl_pitch(starting_11, bench_df, selected_gw, captain_id)
-        st.plotly_chart(pitch_fig, use_container_width=True)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Squad", f"{len(starting_11)} start / {len(bench_df)} bench")
+        m2.metric("Squad Value", f"£{total_cost:.1f}m")
+        m3.metric("Captain 👑", captain_row["web_name"], f"{captain_row['xP']*2:.1f} (x2)")
+        m4.metric("Projected Points", f"{total_xp:.2f}")
+
+        st.subheader(f"🏟️ Pitch — {selected_gw_label}")
+        st.plotly_chart(generate_fpl_pitch(starting_11, bench_df, captain_id), use_container_width=True)
 
         st.markdown("---")
-        st.subheader("📅 Single Gameweek Breakdown (GW1 – GW10)")
-        gw_cols = [f'GW{i}_xP' for i in range(1, 11)]
-        squad_breakdown = pd.concat([starting_11, bench_df])[['web_name', 'position', 'team_short', 'now_cost'] + gw_cols].copy()
-        squad_breakdown.columns = ['Player', 'Pos', 'Team', 'Cost'] + [f'GW{i}' for i in range(1, 11)]
-        st.dataframe(squad_breakdown, use_container_width=True)
+        st.subheader(f"📅 Squad xP Breakdown (GW1–GW{MAX_GW_HORIZON})")
+        gw_cols = [f"GW{i}_xP" for i in range(1, MAX_GW_HORIZON + 1)]
+        breakdown = pd.concat([starting_11, bench_df])[
+            ["web_name", "position", "team_short", "now_cost"] + gw_cols
+        ].copy()
+        breakdown.columns = ["Player", "Pos", "Team", "Cost"] + [f"GW{i}" for i in range(1, MAX_GW_HORIZON + 1)]
+        st.dataframe(breakdown, use_container_width=True, hide_index=True)
 
-# --- TRANSFER PLANNER PAGE ---
+# =============================================================================
+# TRANSFER PLANNER
+# =============================================================================
 elif menu == "🔄 Transfer Planner":
-    st.title("🔄 FPL Transfer & Financial Planner")
-    st.caption("Plan transfers, evaluate point projections, monitor remaining budget, and compare fixture schedules.")
+    st.title("🔄 Transfer & Financial Planner")
 
-    current_squad_ids = []
-    if st.session_state.custom_squad_ids:
-        current_squad_ids = st.session_state.custom_squad_ids
-    elif use_manual_picker:
-        gkps = players_df[players_df['position'] == 'GKP']['id'].tolist()[:2]
-        defs = players_df[players_df['position'] == 'DEF']['id'].tolist()[:5]
-        mids = players_df[players_df['position'] == 'MID']['id'].tolist()[:5]
-        fwds = players_df[players_df['position'] == 'FWD']['id'].tolist()[:3]
-        current_squad_ids = gkps + defs + mids + fwds
-    elif manager_id_input:
-        user_data = fetch_user_squad(manager_id_input, current_gw)
-        if user_data:
-            current_squad_ids = [p['element'] for p in user_data.get('picks', [])]
+    # Resolve current squad
+    if st.session_state.custom_squad_ids and len(st.session_state.custom_squad_ids) >= 15:
+        current_ids = st.session_state.custom_squad_ids
+    elif picks_data:
+        current_ids = [p["element"] for p in picks_data.get("picks", [])]
+    else:
+        current_ids = []
 
-    if not current_squad_ids or len(current_squad_ids) < 15:
-        st.warning("⚠️ Active squad incomplete. Please select a full 15-player squad in 'My Squad & Pitch View' first.")
+    if len(current_ids) < 15:
+        st.warning("⚠️ Need a full 15-player squad first (Squad page or valid Manager ID).")
         st.stop()
 
-    active_squad_df = players_df[players_df['id'].isin(current_squad_ids)].copy()
-    
-    total_squad_val = round(active_squad_df['now_cost'].sum(), 1)
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Current Squad Value", f"£{total_squad_val:.1f}m")
-    st.session_state.bank_balance = col2.number_input("In The Bank (£m)", min_value=0.0, max_value=25.0, value=float(st.session_state.bank_balance), step=0.1)
-    free_transfers = col3.number_input("Free Transfers Available", min_value=1, max_value=5, value=1, step=1)
-    total_budget = round(total_squad_val + st.session_state.bank_balance, 1)
-    col4.metric("Total Budget Available", f"£{total_budget:.1f}m")
+    active = players_df[players_df["id"].isin(current_ids)].copy()
+    squad_val = round(active["now_cost"].sum(), 1)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Squad Value", f"£{squad_val:.1f}m")
+    st.session_state.bank_balance = c2.number_input(
+        "In The Bank (£m)", min_value=0.0, max_value=30.0,
+        value=float(st.session_state.bank_balance), step=0.1,
+    )
+    free_transfers = c3.number_input("Free Transfers", min_value=0, max_value=5, value=1, step=1)
+    total_budget = round(squad_val + st.session_state.bank_balance, 1)
+    c4.metric("Total Budget", f"£{total_budget:.1f}m")
 
     st.markdown("---")
-    st.subheader("🔁 Evaluate Potential Transfer")
-    
-    p_col1, p_col2 = st.columns(2)
-    
-    with p_col1:
-        st.markdown("#### ❌ Player Out (Current Squad)")
-        player_out_id = st.selectbox(
-            "Select player to sell:",
-            options=active_squad_df['id'].tolist(),
-            format_func=lambda x: active_squad_df[active_squad_df['id'] == x]['display_label'].values[0]
-        )
-        p_out = active_squad_df[active_squad_df['id'] == player_out_id].iloc[0]
+    st.subheader("🔁 Evaluate Transfer")
 
-    with p_col2:
-        st.markdown("#### 🔄 Player In (Target Replacement)")
-        eligible_targets = players_df[
-            (players_df['position'] == p_out['position']) & 
-            (~players_df['id'].isin(current_squad_ids)) &
-            (players_df['now_cost'] <= round(p_out['now_cost'] + st.session_state.bank_balance, 1))
-        ].sort_values(by=selected_gw_col, ascending=False)
-        
-        if eligible_targets.empty:
-            st.error("No eligible players found within your remaining budget!")
-            player_in_id = None
+    left, right = st.columns(2)
+    with left:
+        st.markdown("#### ❌ Player Out")
+        out_id = st.selectbox(
+            "Sell",
+            options=active["id"].tolist(),
+            format_func=lambda x: active.loc[active["id"] == x, "display_label"].values[0],
+        )
+        p_out = active[active["id"] == out_id].iloc[0]
+
+    with right:
+        st.markdown("#### 🔄 Player In")
+        max_afford = round(p_out["now_cost"] + st.session_state.bank_balance, 1)
+        targets = players_df[
+            (players_df["position"] == p_out["position"])
+            & (~players_df["id"].isin(current_ids))
+            & (players_df["now_cost"] <= max_afford)
+        ].sort_values(selected_gw_col, ascending=False)
+
+        if targets.empty:
+            st.error("No affordable replacements in this position.")
             p_in = None
         else:
-            player_in_id = st.selectbox(
-                "Select target replacement:",
-                options=eligible_targets['id'].tolist(),
-                format_func=lambda x: eligible_targets[eligible_targets['id'] == x]['display_label'].values[0]
+            in_id = st.selectbox(
+                "Buy",
+                options=targets["id"].tolist(),
+                format_func=lambda x: targets.loc[targets["id"] == x, "display_label"].values[0],
             )
-            p_in = eligible_targets[eligible_targets['id'] == player_in_id].iloc[0]
+            p_in = targets[targets["id"] == in_id].iloc[0]
 
-    if p_out is not None and p_in is not None:
-        cost_diff = round(p_in['now_cost'] - p_out['now_cost'], 1)
-        xp_out_single = p_out[selected_gw_col]
-        xp_in_single = p_in[selected_gw_col]
-        xp_diff_single = round(xp_in_single - xp_out_single, 2)
-        
-        target_gw_num = int(selected_gw.replace("GW", ""))
-        horizon_gws = [f"GW{i}_xP" for i in range(target_gw_num, min(11, target_gw_num + 5))]
-        
-        cum_xp_out = sum([p_out[col] for col in horizon_gws])
-        cum_xp_in = sum([p_in[col] for col in horizon_gws])
-        cum_xp_diff = round(cum_xp_in - cum_xp_out, 2)
+    if p_in is not None:
+        cost_diff = round(p_in["now_cost"] - p_out["now_cost"], 1)
+        xp_diff = round(p_in[selected_gw_col] - p_out[selected_gw_col], 2)
 
-        st.markdown("### 📊 Direct Comparison")
+        horizon = [f"GW{i}_xP" for i in range(selected_gw_num, min(MAX_GW_HORIZON + 1, selected_gw_num + 5))]
+        cum_diff = round(sum(p_in[c] for c in horizon) - sum(p_out[c] for c in horizon), 2)
+
+        hit_cost = 0 if free_transfers >= 1 else 4
+        net_single = round(xp_diff - hit_cost, 2)
+
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Cost Change", f"£{cost_diff:+.1f}m", delta=f"{'Save' if cost_diff < 0 else 'Cost'} £{abs(cost_diff):.1f}m", delta_color="inverse")
-        m2.metric(f"Active ({selected_gw}) xP Gain", f"{xp_diff_single:+.2f} pts", delta=f"{xp_diff_single:+.2f} pts")
-        m3.metric(f"{len(horizon_gws)}-GW Cumulative xP Gain", f"{cum_xp_diff:+.2f} pts", delta=f"{cum_xp_diff:+.2f} pts")
-        
-        rem_bank = round(st.session_state.bank_balance - cost_diff, 1)
-        m4.metric("Remaining Bank After Transfer", f"£{rem_bank:.1f}m")
+        m1.metric("Cost Change", f"£{cost_diff:+.1f}m")
+        m2.metric(f"{selected_gw_label} xP Δ", f"{xp_diff:+.2f}")
+        m3.metric(f"{len(horizon)}-GW Cumul. Δ", f"{cum_diff:+.2f}")
+        m4.metric("Bank After", f"£{st.session_state.bank_balance - cost_diff:.1f}m")
 
-        # --- ENHANCED FDR FIXTURE LOOKUP & VISUAL DISPLAY WITH COLORS ---
-        st.markdown("#### 🗓️ Upcoming Fixture Difficulty (FDR) Comparison")
-        
-        fdr_hex_colors = {
-            1: "#00FF7F",  # Very Easy - Bright Green
-            2: "#00BFFF",  # Easy - Light Blue
-            3: "#E0E0E0",  # Medium - Light Gray
-            4: "#FF8C00",  # Hard - Orange
-            5: "#FF4500"   # Very Hard - Bright Red
-        }
-        
-        fdr_text_colors = {
-            1: "#000000",
-            2: "#000000",
-            3: "#000000",
-            4: "#FFFFFF",
-            5: "#FFFFFF"
-        }
+        if hit_cost:
+            st.warning(f"This transfer would cost a **-4 hit**. Net single-GW gain: **{net_single:+.2f}**")
 
-        st.caption("🟢 FDR 1 (Very Easy) | 🔵 FDR 2 (Easy) | ⚪ FDR 3 (Neutral) | 🟠 FDR 4 (Hard) | 🔴 FDR 5 (Very Hard)")
+        # FDR comparison
+        st.markdown("#### 🗓️ Fixture Difficulty Comparison")
+        st.caption("🟢1  🔵2  ⚪3  🟠4  🔴5")
 
-        # Render Player Out Fixtures
-        st.markdown(f"**🔴 Selling: {p_out['web_name']} ({p_out['team_short']})**")
-        out_cols = st.columns(len(horizon_gws))
-        
-        for idx, gw_name in enumerate(horizon_gws):
-            gw_num = int(gw_name.replace("GW", "").replace("_xP", ""))
-            fix_meta = team_fixture_details.get(p_out['team'], {}).get(gw_num, {'opponent': 'BYE', 'venue': '', 'fdr': 3})
-            fdr = fix_meta['fdr']
-            hex_color = fdr_hex_colors.get(fdr, "#E0E0E0")
-            txt_color = fdr_text_colors.get(fdr, "#000000")
-            
-            label = f"{fix_meta['opponent']} ({fix_meta['venue']})" if fix_meta['opponent'] != 'BYE' else 'BYE'
-            
-            with out_cols[idx]:
-                st.markdown(
-                    f"""
-                    <div style="
-                        background-color: {hex_color};
-                        color: {txt_color};
-                        padding: 8px;
-                        border-radius: 8px;
-                        text-align: center;
-                        font-weight: bold;
-                        margin-bottom: 5px;
-                    ">
-                        <div style="font-size: 11px; opacity: 0.8;">GW{gw_num}</div>
-                        <div style="font-size: 14px;">{label}</div>
-                        <div style="font-size: 10px; margin-top: 2px;">FDR {fdr}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+        def render_fdr_row(player, label):
+            st.markdown(f"**{label}: {player['web_name']} ({player['team_short']})**")
+            cols = st.columns(len(horizon))
+            for idx, gwc in enumerate(horizon):
+                gw = int(gwc.replace("GW", "").replace("_xP", ""))
+                meta = team_fixture_details.get(player["team"], {}).get(gw, {"opponent": "BYE", "venue": "", "fdr": 3})
+                bg, fg = FDR_COLORS.get(meta["fdr"], ("#E0E0E0", "#000"))
+                txt = f"{meta['opponent']} ({meta['venue']})" if meta["opponent"] != "BYE" else "BYE"
+                with cols[idx]:
+                    st.markdown(
+                        f"""<div style="background:{bg};color:{fg};padding:8px;border-radius:8px;
+                        text-align:center;font-weight:bold;margin-bottom:4px;">
+                        <div style="font-size:11px;opacity:.8">GW{gw}</div>
+                        <div style="font-size:14px">{txt}</div>
+                        <div style="font-size:10px">FDR {meta['fdr']}</div></div>""",
+                        unsafe_allow_html=True,
+                    )
 
-        # Render Player In Fixtures
-        st.markdown(f"**🟢 Buying: {p_in['web_name']} ({p_in['team_short']})**")
-        in_cols = st.columns(len(horizon_gws))
-        
-        for idx, gw_name in enumerate(horizon_gws):
-            gw_num = int(gw_name.replace("GW", "").replace("_xP", ""))
-            fix_meta = team_fixture_details.get(p_in['team'], {}).get(gw_num, {'opponent': 'BYE', 'venue': '', 'fdr': 3})
-            fdr = fix_meta['fdr']
-            hex_color = fdr_hex_colors.get(fdr, "#E0E0E0")
-            txt_color = fdr_text_colors.get(fdr, "#000000")
-            
-            label = f"{fix_meta['opponent']} ({fix_meta['venue']})" if fix_meta['opponent'] != 'BYE' else 'BYE'
-            
-            with in_cols[idx]:
-                st.markdown(
-                    f"""
-                    <div style="
-                        background-color: {hex_color};
-                        color: {txt_color};
-                        padding: 8px;
-                        border-radius: 8px;
-                        text-align: center;
-                        font-weight: bold;
-                        margin-bottom: 5px;
-                    ">
-                        <div style="font-size: 11px; opacity: 0.8;">GW{gw_num}</div>
-                        <div style="font-size: 14px;">{label}</div>
-                        <div style="font-size: 10px; margin-top: 2px;">FDR {fdr}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+        render_fdr_row(p_out, "🔴 Out")
+        render_fdr_row(p_in, "🟢 In")
 
         st.markdown("---")
-        if st.button("➕ Stage & Apply Transfer to Active Squad", type="primary"):
-            updated_squad = [pid for pid in current_squad_ids if pid != player_out_id] + [player_in_id]
-            st.session_state.custom_squad_ids = updated_squad
-            st.session_state.bank_balance = rem_bank
+        if st.button("➕ Apply Transfer to Active Squad", type="primary"):
+            new_ids = [i for i in current_ids if i != out_id] + [in_id]
+            st.session_state.custom_squad_ids = new_ids
+            st.session_state.bank_balance = round(st.session_state.bank_balance - cost_diff, 1)
             st.session_state.planned_transfers.append({
-                'out': p_out['web_name'],
-                'in': p_in['web_name'],
-                'cost_diff': cost_diff,
-                'xp_gain': xp_diff_single
+                "out": p_out["web_name"], "in": p_in["web_name"],
+                "cost": cost_diff, "xp": xp_diff,
             })
-            st.success(f"✅ Transfer Applied! {p_out['web_name']} ➔ {p_in['web_name']}. Bank balance updated to £{rem_bank:.1f}m.")
+            st.success(f"✅ {p_out['web_name']} → {p_in['web_name']} applied.")
             st.rerun()
 
-# --- PLAYER EXPLORER & DIFFERENTIALS PAGE ---
+    if st.session_state.planned_transfers:
+        st.markdown("### Staged Transfers This Session")
+        st.dataframe(pd.DataFrame(st.session_state.planned_transfers), hide_index=True)
+
+# =============================================================================
+# EXPLORER
+# =============================================================================
 elif menu == "🔍 Player Explorer & Differentials":
-    st.title("🔍 Player Explorer & Differentials Finder")
-    st.caption("Discover low-ownership differential gems, filter by price or position, and analyze underlying metrics.")
+    st.title("🔍 Player Explorer & Differentials")
 
-    col_filter1, col_filter2, col_filter3 = st.columns(3)
-    
-    with col_filter1:
-        pos_filter = st.multiselect("Position", options=['GKP', 'DEF', 'MID', 'FWD'], default=['MID', 'FWD'])
-    
-    with col_filter2:
-        max_price = st.slider("Max Player Price (£m)", min_value=4.0, max_value=15.0, value=10.0, step=0.5)
-        
-    with col_filter3:
-        max_ownership = st.slider("Max Ownership % (Differentials)", min_value=1.0, max_value=50.0, value=10.0, step=1.0)
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        pos_f = st.multiselect("Position", ["GKP", "DEF", "MID", "FWD"], default=["MID", "FWD"])
+    with f2:
+        max_price = st.slider("Max Price (£m)", 4.0, 15.0, 10.0, 0.5)
+    with f3:
+        max_own = st.slider("Max Ownership %", 1.0, 50.0, 12.0, 1.0)
 
-    filtered_df = players_df[
-        (players_df['position'].isin(pos_filter)) &
-        (players_df['now_cost'] <= max_price) &
-        (players_df['selected_by_percent'] <= max_ownership)
-    ].sort_values(by=selected_gw_col, ascending=False)
+    filtered = players_df[
+        (players_df["position"].isin(pos_f))
+        & (players_df["now_cost"] <= max_price)
+        & (players_df["selected_by_percent"] <= max_own)
+    ].sort_values(selected_gw_col, ascending=False)
 
-    st.markdown(f"### 💎 Top Differentials for {selected_gw} (< {max_ownership}% Ownership)")
-    
-    display_cols = ['web_name', 'position', 'team_short', 'now_cost', 'selected_by_percent', selected_gw_col, 'expected_goal_involvements', 'minutes']
-    
-    explorer_table = filtered_df[display_cols].copy()
-    explorer_table.columns = ['Player', 'Pos', 'Team', 'Price (£m)', 'Ownership %', f'xP ({selected_gw})', 'xGI', 'Minutes Played']
-    
-    st.dataframe(explorer_table.head(20), use_container_width=True, hide_index=True)
+    st.markdown(f"### 💎 Top Differentials — {selected_gw_label} (<{max_own}% owned)")
+    show = filtered[
+        ["web_name", "position", "team_short", "now_cost", "selected_by_percent",
+         selected_gw_col, "xgi_p90", "minutes"]
+    ].head(25).copy()
+    show.columns = ["Player", "Pos", "Team", "Price", "Own%", f"xP ({selected_gw_label})", "xGI/90", "Mins"]
+    st.dataframe(show, use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    st.subheader("📈 Value vs Expected Points Scatter Analysis")
-    
-    fig_scatter = px.scatter(
-        filtered_df.head(40),
-        x='now_cost',
-        y=selected_gw_col,
-        size='selected_by_percent',
-        color='position',
-        hover_name='web_name',
-        text='web_name',
-        labels={'now_cost': 'Cost (£m)', selected_gw_col: f'Expected Points ({selected_gw})'},
-        template='plotly_dark'
+    st.subheader("📈 Price vs xP (bubble = ownership)")
+    fig = px.scatter(
+        filtered.head(50),
+        x="now_cost", y=selected_gw_col,
+        size="selected_by_percent", color="position",
+        hover_name="web_name", text="web_name",
+        labels={"now_cost": "Cost (£m)", selected_gw_col: f"xP ({selected_gw_label})"},
+        template="plotly_dark",
     )
-    fig_scatter.update_traces(textposition='top center')
-    fig_scatter.update_layout(height=500)
-    
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    fig.update_traces(textposition="top center")
+    fig.update_layout(height=520)
+    st.plotly_chart(fig, use_container_width=True)
