@@ -328,18 +328,21 @@ history = fetch_entry_history(manager_id_input) if manager_id_input else None
 picks_data = fetch_user_picks(manager_id_input, current_gw) if manager_id_input else None
 
 if entry:
+    # None-safe: pre-season often returns null for these fields
+    bank_raw = entry.get("last_deadline_bank") or 0
+    value_raw = entry.get("last_deadline_value") or 0
     st.session_state.manager_meta = {
         "name": f"{entry.get('player_first_name', '')} {entry.get('player_last_name', '')}".strip(),
         "team_name": entry.get("name", ""),
         "overall_rank": entry.get("summary_overall_rank"),
         "overall_points": entry.get("summary_overall_points"),
-        "last_deadline_bank": entry.get("last_deadline_bank", 0) / 10.0,
-        "last_deadline_value": entry.get("last_deadline_value", 0) / 10.0,
+        "last_deadline_bank": bank_raw / 10.0,
+        "last_deadline_value": value_raw / 10.0,
     }
-    # Prefer live-ish bank from picks entry_history
+    # Prefer live-ish bank from picks entry_history when available
     if picks_data and "entry_history" in picks_data:
         eh = picks_data["entry_history"]
-        bank = eh.get("bank", entry.get("last_deadline_bank", 0)) / 10.0
+        bank = (eh.get("bank") or bank_raw) / 10.0
         st.session_state.bank_balance = bank
     else:
         st.session_state.bank_balance = st.session_state.manager_meta["last_deadline_bank"]
@@ -361,7 +364,7 @@ if entry:
         st.sidebar.caption("Chips used: " + ", ".join(chips_used))
 
 # =============================================================================
-# PITCH VISUALIZER (unchanged core, minor polish)
+# PITCH VISUALIZER
 # =============================================================================
 def generate_fpl_pitch(starting_11_df: pd.DataFrame, bench_df: pd.DataFrame, captain_id: int):
     fig = go.Figure()
