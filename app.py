@@ -17,7 +17,6 @@ DEFAULT_MANAGER_ID = "475093"
 MAX_GW_HORIZON = 10
 CACHE_TTL = 3600
 
-# xP model knobs
 XGI_WEIGHT = {"GKP": 0.0, "DEF": 0.9, "MID": 1.4, "FWD": 1.6}
 FDR_WEIGHT = 0.08
 MINUTES_THRESHOLD = 60.0
@@ -302,6 +301,8 @@ menu_options = [
     "📊 Dashboard Overview",
     "🛡️ My Squad & Pitch View",
     "🔄 Transfer Planner",
+    "💡 Transfer Recommendations",
+    "📅 Fixture Analyzer",
     "🔍 Player Explorer & Differentials",
 ]
 menu = st.sidebar.radio(
@@ -734,7 +735,7 @@ elif menu == "🛡️ My Squad & Pitch View":
         st.dataframe(breakdown, use_container_width=True, hide_index=True)
 
 # =============================================================================
-# TRANSFER PLANNER
+# TRANSFER PLANNER (manual)
 # =============================================================================
 elif menu == "🔄 Transfer Planner":
     st.title("🔄 Transfer & Financial Planner")
@@ -856,68 +857,187 @@ elif menu == "🔄 Transfer Planner":
         st.dataframe(pd.DataFrame(st.session_state.planned_transfers), hide_index=True)
 
 # =============================================================================
+# 💡 TRANSFER RECOMMENDATIONS (NEW)
+# =============================================================================
+elif menu == "💡 Transfer Recommendations":
+    st.title("💡 Smart Transfer Recommendations")
+    st.caption("AI-style suggestions based on your current squad, xP model and fixtures.")
+
+    # Resolve squad
+    if st.session_state.custom_squad_ids and len(st.session_state.custom_squad_ids) >= 15:
+        current_ids = st.session_state.custom_squad_ids
+    elif picks_data:
+        current_ids = [p["element"] for p in picks_data.get("picks", [])]
+    else:
+        current_ids = []
+
+    if len(current_ids) < 15:
+        st.warning("⚠️ Need a full 15-player squad first.")
+        st.stop()
+
+    squad = players_df[players_df["id"].isin(current_ids)].copy()
+    bank = float(st.session_state.bank_balance)
+
+    # Horizon for recommendations
+    horizon_gws = list(range(selected_gw_num, min(MAX_GW_HORIZON + 1, selected_gw_num + 5)))
+    horizon_cols = [f"GW{g}_xP" for g in horizon_gws]
+
+    # Calculate average xP over horizon for every player
+    players_df["horizon_xp"] = players_df[horizon_cols].mean(axis=1)
+    squad["horizon_xp"] = squad[horizon_cols].mean(axis=1)
+
+    st.subheader(f"Looking at next {len(horizon_gws)} gameweeks (GW{horizon_gws[0]}–GW{horizon_gws[-1]})")
+
+    # --- Who to sell ---
+    st.markdown("### 🔴 Suggested Sells (lowest horizon xP in your squad)")
+    sells = squad.sort_values("horizon_xp").head(6)[
+        ["web_name", "position", "team_short", "now_cost", "selected_by_percent", "horizon_xp"] + horizon_cols
+    ].copy()
+    sells.columns = ["Player", "Pos", "Team", "Price", "Own%", "Avg xP"] + [f"GW{g}" for g in horizon_gws]
+    st.dataframe(sells, use_container_width=True, hide_index=True)
+
+    # --- Who to buy ---
+    st.markdown("### 🟢 Top Targets by Position (not in your squad)")
+
+    for pos in ["GKP", "DEF", "MID", "FWD"]:
+        with st.expander(f"{pos} targets", expanded=(pos in ["MID", "FWD"])):
+            # Find the weakest player of this position in squad (for budget reference)
+            pos_in_squad = squad[squad["position"] == pos]
+            if pos_in_squad.empty:
+                continue
+            weakest = pos_in_squad.sort_values("horizon_xp").iloc[0]
+            max_budget = round(weakest["now_cost"] + bank + 1.0, 1)  # small buffer
+
+            candidates = players_df[
+                (players_df["position"] == pos)
+                & (~players_df["id"].isin(current_ids))
+                & (players_df["now_cost"] <= max_budget)
+            ].sort_values("horizon_xp", ascending=False).head(8)
+
+            if candidates.empty:
+                st.write("No strong affordable options.")
+                continue
+
+            show = candidates[
+                ["web_name", "team_short", "now_cost", "selected_by_percent", "horizon_xp"] + horizon_cols
+            ].copy()
+            show.columns = ["Player", "Team", "Price", "Own%", "Avg xP"] + [f"GW{g}" for g in horizon_gws]
+            st.dataframe(show, use_container_width=True, hide_index=True)
+
+    # --- Best single transfers ---
+    st.markdown("---")
+    st.subheader("⭐ Best Single Transfers (by expected gain)")
+
+    recommendations = []
+    for _, out_p in squad.iterrows():
+        pos = out_p["position"]
+        max_price = round(out_p["now_cost"] + bank, 1)
+        targets = players_df[
+            (players_df["position"] == pos)
+            & (~players_df["id"].isin(current_ids))
+            & (players_df["now_cost"] <= max_price)
+        ]
+        if targets.empty:
+            continue
+        best_in = targets.sort_values("horizon_xp", ascending=False).iloc[0]
+        gain = round(best_in["horizon_xp"] - out_p["horizon_xp"], 2)
+        if gain > 0.3:  # only meaningful upgrades
+            recommendations.append({
+                "Out": out_p["web_name"],
+                "Out Pos": pos,
+                "Out Price": out_p["now_cost"],
+                "In": best_in["web_name"],
+                "In Team": best_in["team_short"],
+                "In Price": best_in["now_cost"],
+                "Cost Δ": round(best_in["now_cost"] - out_p["now_cost"], 1),
+                "Avg xP Gain": gain,
+            })
+
+    if recommendations:
+        rec_df = pd.DataFrame(recommendations).sort_values("Avg xP Gain", ascending=False).head(12)
+        st.dataframe(rec_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No strong single-transfer upgrades found with current bank.")
+
+# =============================================================================
+# 📅 FIXTURE ANALYZER (NEW)
+# =============================================================================
+elif menu == "📅 Fixture Analyzer":
+    st.title("📅 Fixture Analyzer")
+    st.caption("Team FDR matrix and easy/hard runs for the next gameweeks.")
+
+    start_gw = st.slider("Start from GW", 1, MAX_GW_HORIZON, selected_gw_num)
+    num_gws = st.slider("Number of gameweeks to show", 4, 10, 6)
+    end_gw = min(start_gw + num_gws - 1, 38)
+
+    # Build FDR matrix
+    rows = []
+    for tid, tname in team_short_map.items():
+        row = {"Team": tname}
+        total = 0
+        count = 0
+        for gw in range(start_gw, end_gw + 1):
+            fdr = team_fixtures.get(tid, {}).get(gw, None)
+            if fdr is not None:
+                meta = team_fixture_details.get(tid, {}).get(gw, {})
+                label = f"{meta.get('opponent', '?')} ({meta.get('venue', '')})"
+                row[f"GW{gw}"] = f"{label} [{fdr}]"
+                total += fdr
+                count += 1
+            else:
+                row[f"GW{gw}"] = "–"
+        row["Avg FDR"] = round(total / count, 2) if count else None
+        rows.append(row)
+
+    fdr_df = pd.DataFrame(rows).sort_values("Avg FDR")
+
+    st.subheader(f"Team Fixture Difficulty (GW{start_gw}–GW{end_gw})")
+    st.dataframe(fdr_df, use_container_width=True, hide_index=True)
+
+    # Easy / Hard runs
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 🟢 Easiest Runs (lowest Avg FDR)")
+        easy = fdr_df.nsmallest(8, "Avg FDR")[["Team", "Avg FDR"] + [f"GW{g}" for g in range(start_gw, end_gw + 1)]]
+        st.dataframe(easy, use_container_width=True, hide_index=True)
+
+    with col2:
+        st.markdown("### 🔴 Hardest Runs (highest Avg FDR)")
+        hard = fdr_df.nlargest(8, "Avg FDR")[["Team", "Avg FDR"] + [f"GW{g}" for g in range(start_gw, end_gw + 1)]]
+        st.dataframe(hard, use_container_width=True, hide_index=True)
+
+    # Color legend
+    st.caption("FDR scale: 🟢1 (easiest) → 🔴5 (hardest)")
+
+# =============================================================================
 # PLAYER EXPLORER & DIFFERENTIALS
 # =============================================================================
 elif menu == "🔍 Player Explorer & Differentials":
     st.title("🔍 Player Explorer & Differentials")
 
-    # --- Filters ---
     f1, f2, f3, f4 = st.columns([2, 1.2, 1.2, 1.2])
 
     with f1:
-        search_query = st.text_input(
-            "🔎 Search player",
-            placeholder="Type player name…",
-            key="explorer_search",
-        )
-
+        search_query = st.text_input("🔎 Search player", placeholder="Type player name…", key="explorer_search")
     with f2:
-        pos_f = st.multiselect(
-            "Position",
-            options=["GKP", "DEF", "MID", "FWD"],
-            default=["GKP", "DEF", "MID", "FWD"],
-            key="explorer_pos",
-        )
-
+        pos_f = st.multiselect("Position", ["GKP", "DEF", "MID", "FWD"], default=["GKP", "DEF", "MID", "FWD"], key="explorer_pos")
     with f3:
-        max_price = st.slider(
-            "Max Price (£m)",
-            min_value=4.0,
-            max_value=15.0,
-            value=15.0,
-            step=0.5,
-            key="explorer_price",
-        )
-
+        max_price = st.slider("Max Price (£m)", 4.0, 15.0, 15.0, 0.5, key="explorer_price")
     with f4:
-        differentials_mode = st.toggle(
-            "💎 Differentials only",
-            value=False,
-            help="When ON, only shows players below the ownership threshold",
-        )
+        differentials_mode = st.toggle("💎 Differentials only", value=False)
 
     max_own = 100.0
     if differentials_mode:
-        max_own = st.slider(
-            "Max Ownership %",
-            min_value=1.0,
-            max_value=50.0,
-            value=12.0,
-            step=1.0,
-            key="explorer_own",
-        )
+        max_own = st.slider("Max Ownership %", 1.0, 50.0, 12.0, 1.0, key="explorer_own")
 
-    # --- Filtering logic ---
     filtered = players_df.copy()
-
     if pos_f:
         filtered = filtered[filtered["position"].isin(pos_f)]
-
     filtered = filtered[filtered["now_cost"] <= max_price]
-
     if differentials_mode:
         filtered = filtered[filtered["selected_by_percent"] <= max_own]
-
     if search_query and search_query.strip():
         q = search_query.strip().lower()
         filtered = filtered[
@@ -925,48 +1045,24 @@ elif menu == "🔍 Player Explorer & Differentials":
             | filtered["team_name"].str.lower().str.contains(q, na=False)
             | filtered["team_short"].str.lower().str.contains(q, na=False)
         ]
-
     filtered = filtered.sort_values(selected_gw_col, ascending=False)
 
-    # --- Results header ---
     if differentials_mode:
-        st.markdown(
-            f"### 💎 Differentials — {selected_gw_label} "
-            f"(<{max_own}% ownership) · {len(filtered)} players"
-        )
+        st.markdown(f"### 💎 Differentials — {selected_gw_label} (<{max_own}% ownership) · {len(filtered)} players")
     else:
-        st.markdown(
-            f"### 📋 All Players — {selected_gw_label} · {len(filtered)} players"
-        )
+        st.markdown(f"### 📋 All Players — {selected_gw_label} · {len(filtered)} players")
 
     if filtered.empty:
         st.info("No players match your current filters / search.")
     else:
-        show = filtered[
-            [
-                "web_name",
-                "position",
-                "team_short",
-                "now_cost",
-                "selected_by_percent",
-                selected_gw_col,
-                "xgi_p90",
-                "minutes",
-                "form",
-            ]
-        ].head(50).copy()
+        gw_xp_cols = [f"GW{i}_xP" for i in range(selected_gw_num, MAX_GW_HORIZON + 1)]
+        gw_display_names = [f"GW{i}" for i in range(selected_gw_num, MAX_GW_HORIZON + 1)]
 
-        show.columns = [
-            "Player",
-            "Pos",
-            "Team",
-            "Price",
-            "Own %",
-            f"xP ({selected_gw_label})",
-            "xGI/90",
-            "Mins",
-            "Form",
-        ]
+        show = filtered[
+            ["web_name", "position", "team_short", "now_cost", "selected_by_percent"] + gw_xp_cols
+        ].head(50).copy()
+        show.columns = ["Player", "Pos", "Team", "Price", "Own %"] + gw_display_names
+        show["Total"] = show[gw_display_names].sum(axis=1).round(1)
 
         st.dataframe(
             show,
@@ -975,42 +1071,21 @@ elif menu == "🔍 Player Explorer & Differentials":
             column_config={
                 "Price": st.column_config.NumberColumn(format="£%.1f"),
                 "Own %": st.column_config.NumberColumn(format="%.1f%%"),
-                f"xP ({selected_gw_label})": st.column_config.NumberColumn(format="%.2f"),
-                "xGI/90": st.column_config.NumberColumn(format="%.2f"),
+                **{gw: st.column_config.NumberColumn(format="%.1f") for gw in gw_display_names},
+                "Total": st.column_config.NumberColumn(format="%.1f"),
             },
         )
 
         if len(filtered) >= 5:
             st.markdown("---")
-            st.subheader("📈 Price vs xP (bubble size = ownership)")
-
-            scatter_df = filtered.head(60)
+            st.subheader("📈 Price vs xP")
             fig = px.scatter(
-                scatter_df,
-                x="now_cost",
-                y=selected_gw_col,
-                size="selected_by_percent",
-                color="position",
+                filtered.head(60),
+                x="now_cost", y=selected_gw_col,
+                size="selected_by_percent", color="position",
                 hover_name="web_name",
-                hover_data={
-                    "team_short": True,
-                    "selected_by_percent": ":.1f",
-                    "now_cost": ":.1f",
-                    selected_gw_col: ":.2f",
-                },
-                labels={
-                    "now_cost": "Cost (£m)",
-                    selected_gw_col: f"xP ({selected_gw_label})",
-                    "selected_by_percent": "Ownership %",
-                },
                 template="plotly_dark",
-                color_discrete_map={
-                    "GKP": "#FFD700",
-                    "DEF": "#00BFFF",
-                    "MID": "#00FF7F",
-                    "FWD": "#FF4500",
-                },
+                color_discrete_map={"GKP": "#FFD700", "DEF": "#00BFFF", "MID": "#00FF7F", "FWD": "#FF4500"},
             )
-            fig.update_traces(textposition="top center")
-            fig.update_layout(height=520, showlegend=True)
+            fig.update_layout(height=520)
             st.plotly_chart(fig, use_container_width=True)
