@@ -17,11 +17,11 @@ DEFAULT_MANAGER_ID = "475093"
 MAX_GW_HORIZON = 10
 CACHE_TTL = 3600
 
-# xP model knobs (tune these)
+# xP model knobs
 XGI_WEIGHT = {"GKP": 0.0, "DEF": 0.9, "MID": 1.4, "FWD": 1.6}
-FDR_WEIGHT = 0.08          # per FDR step away from 3
+FDR_WEIGHT = 0.08
 MINUTES_THRESHOLD = 60.0
-EP_BLEND = 0.65            # how much official ep_next to trust vs underlying
+EP_BLEND = 0.65
 
 HEADERS = {
     "User-Agent": (
@@ -39,7 +39,6 @@ FDR_COLORS = {
     5: ("#FF4500", "#FFFFFF"),
 }
 
-# Legal FPL formations (DEF, MID, FWD) — GKP always 1
 LEGAL_FORMATIONS = [
     (3, 4, 3), (3, 5, 2), (4, 3, 3), (4, 4, 2), (4, 5, 1), (5, 3, 2), (5, 4, 1)
 ]
@@ -154,7 +153,6 @@ def fetch_entry_history(manager_id: str) -> Optional[dict]:
 
 @st.cache_data(ttl=300)
 def fetch_user_picks(manager_id: str, gw: int) -> Optional[dict]:
-    """Try current GW, then previous if 404 (pre-deadline / early season)."""
     for try_gw in (gw, max(1, gw - 1)):
         try:
             r = SESSION.get(
@@ -181,7 +179,6 @@ teams_df = pd.DataFrame(raw_data["teams"])
 positions_df = pd.DataFrame(raw_data["element_types"])
 events_df = pd.DataFrame(raw_data["events"])
 
-# Current / next GW
 current_gw = 1
 next_gw = 1
 for _, event in events_df.iterrows():
@@ -206,7 +203,6 @@ players_df["selected_by_percent"] = (
     pd.to_numeric(players_df["selected_by_percent"], errors="coerce").fillna(0.0)
 )
 
-# Core stats
 for col in [
     "expected_goals", "expected_assists", "expected_goal_involvements",
     "expected_goals_conceded", "minutes", "ep_next", "ep_this",
@@ -224,7 +220,17 @@ players_df["display_label"] = (
     + players_df["now_cost"].astype(str) + "m"
 )
 
-# Fixtures → FDR + opponent info
+# Photo URLs
+def get_player_photo_url(photo_code: str) -> str:
+    if not photo_code or not isinstance(photo_code, str):
+        return "https://resources.premierleague.com/premierleague/photos/players/110x140/Photo-Missing.png"
+    code = photo_code.replace(".jpg", "").replace(".png", "")
+    return f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{code}.png"
+
+players_df["photo"] = players_df.get("photo", "")
+players_df["photo_url"] = players_df["photo"].apply(get_player_photo_url)
+
+# Fixtures
 team_fixtures: Dict[int, Dict[int, int]] = {}
 team_fixture_details: Dict[int, Dict[int, dict]] = {}
 
@@ -246,31 +252,32 @@ for f in fixtures_data:
         "fdr": f["team_a_difficulty"],
     }
 
+def get_next_fixture(team_id: int, from_gw: int) -> str:
+    for gw in range(from_gw, 39):
+        meta = team_fixture_details.get(team_id, {}).get(gw)
+        if meta:
+            return f"{meta['opponent']} ({meta['venue']})"
+    return "–"
+
 # =============================================================================
 # VECTORIZED xP MODEL
 # =============================================================================
 def compute_xp_matrix(df: pd.DataFrame, max_gw: int = MAX_GW_HORIZON) -> pd.DataFrame:
-    """Return df with GW1_xP … GWmax_xP columns. Vectorized."""
     out = df.copy()
     base_ep = out["ep_next"].fillna(0.0)
     xgi_bonus = out["position"].map(XGI_WEIGHT).fillna(0.0) * out["xgi_p90"]
     blended = EP_BLEND * base_ep + (1 - EP_BLEND) * (base_ep + xgi_bonus)
 
-    # Minutes / availability scale
     mins_scale = (out["avg_minutes"] / MINUTES_THRESHOLD).clip(0.25, 1.0)
     chance = out["chance_of_playing_next_round"].replace(0, 100) / 100.0
     chance = chance.fillna(1.0).clip(0.3, 1.0)
     scale = mins_scale * chance
-
     unadj = blended * scale
 
     for gw in range(1, max_gw + 1):
-        fdr_series = out["team"].map(
-            lambda t: team_fixtures.get(t, {}).get(gw, 3)
-        )
+        fdr_series = out["team"].map(lambda t: team_fixtures.get(t, {}).get(gw, 3))
         modifier = 1.0 + (3 - fdr_series) * FDR_WEIGHT
         out[f"GW{gw}_xP"] = (unadj * modifier).clip(lower=0).round(2)
-
     return out
 
 players_df = compute_xp_matrix(players_df)
@@ -322,13 +329,11 @@ if st.sidebar.button("🔄 Reset to Official Picks"):
     st.session_state.planned_transfers = []
     st.rerun()
 
-# Load manager data
 entry = fetch_entry(manager_id_input) if manager_id_input else None
 history = fetch_entry_history(manager_id_input) if manager_id_input else None
 picks_data = fetch_user_picks(manager_id_input, current_gw) if manager_id_input else None
 
 if entry:
-    # None-safe: pre-season often returns null for these fields
     bank_raw = entry.get("last_deadline_bank") or 0
     value_raw = entry.get("last_deadline_value") or 0
     st.session_state.manager_meta = {
@@ -339,7 +344,6 @@ if entry:
         "last_deadline_bank": bank_raw / 10.0,
         "last_deadline_value": value_raw / 10.0,
     }
-    # Prefer live-ish bank from picks entry_history when available
     if picks_data and "entry_history" in picks_data:
         eh = picks_data["entry_history"]
         bank = (eh.get("bank") or bank_raw) / 10.0
@@ -347,7 +351,6 @@ if entry:
     else:
         st.session_state.bank_balance = st.session_state.manager_meta["last_deadline_bank"]
 
-# Chips summary
 chips_used = []
 if history and "chips" in history:
     chips_used = [c.get("name") for c in history["chips"]]
@@ -364,90 +367,174 @@ if entry:
         st.sidebar.caption("Chips used: " + ", ".join(chips_used))
 
 # =============================================================================
-# PITCH VISUALIZER
+# OFFICIAL-STYLE PITCH VISUALIZER
 # =============================================================================
-def generate_fpl_pitch(starting_11_df: pd.DataFrame, bench_df: pd.DataFrame, captain_id: int):
+def generate_fpl_pitch(
+    starting_11_df: pd.DataFrame,
+    bench_df: pd.DataFrame,
+    captain_id: int,
+    vice_id: int = None,
+    target_gw: int = 1,
+):
     fig = go.Figure()
-    fig.add_shape(type="rect", x0=0, y0=20, x1=100, y1=140,
-                  fillcolor="#0a1a12", line=dict(color="#1f422e", width=2))
-    fig.add_shape(type="rect", x0=4, y0=24, x1=96, y1=136, line=dict(color="#2e6345", width=2))
-    fig.add_shape(type="line", x0=4, y0=80, x1=96, y1=80, line=dict(color="#2e6345", width=2))
-    fig.add_shape(type="circle", x0=36, y0=68, x1=64, y1=92, line=dict(color="#2e6345", width=2))
-    fig.add_shape(type="circle", x0=49, y0=79, x1=51, y1=81, fillcolor="#2e6345", line=dict(color="#2e6345"))
-    fig.add_shape(type="rect", x0=22, y0=24, x1=78, y1=45, line=dict(color="#2e6345", width=2))
-    fig.add_shape(type="rect", x0=36, y0=24, x1=64, y1=31, line=dict(color="#2e6345", width=2))
-    fig.add_shape(type="rect", x0=22, y0=115, x1=78, y1=136, line=dict(color="#2e6345", width=2))
-    fig.add_shape(type="rect", x0=36, y0=129, x1=64, y1=136, line=dict(color="#2e6345", width=2))
-    fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=18,
-                  fillcolor="#060c08", line=dict(color="#1f422e", width=1.5))
-    fig.add_annotation(x=4, y=15.5, text="<b>SUBSTITUTES BENCH</b>", showarrow=False,
-                       font=dict(color="#5a826b", size=10, family="Arial"), xanchor="left")
 
-    pos_y_map = {"GKP": 32, "DEF": 58, "MID": 88, "FWD": 118}
+    # Pitch background
+    fig.add_shape(type="rect", x0=0, y0=0, x1=100, y1=130,
+                  fillcolor="#2d8a4e", line=dict(width=0), layer="below")
 
-    def render_player(x, y, player, is_bench=False):
-        is_captain = (player["id"] == captain_id) and not is_bench
-        card_bg = "#1f1800" if is_captain else "#11161d"
-        card_border = "#FFD700" if is_captain else "#2B313E"
-        pts_color = "#FFD700" if is_captain else "#00FF7F"
-        node_bg = "#FFD700" if is_captain else "#37003c"
-        capt_badge = " <b style='color:#FFD700;'>(C)</b>" if is_captain else ""
+    # Outer border
+    fig.add_shape(type="rect", x0=2, y0=4, x1=98, y1=126,
+                  line=dict(color="white", width=2.5), fillcolor="rgba(0,0,0,0)")
 
-        fig.add_trace(go.Scatter(
-            x=[x], y=[y],
-            mode="markers+text",
-            marker=dict(size=22 if not is_bench else 16, color=node_bg,
-                        line=dict(width=2, color=card_border)),
-            text=["<b>C</b>" if is_captain else ""],
-            textposition="middle center",
-            textfont=dict(color="#000000" if is_captain else "#FFFFFF", size=11),
-            hoverinfo="text",
-            hovertext=f"{player['web_name']} (£{player['now_cost']}m) – {player['xP']} pts",
-            showlegend=False,
-        ))
-        card_text = (
-            f"<b>{player['web_name']}</b>{capt_badge}<br>"
-            f"<span style='color:{pts_color}; font-weight:bold;'>{player['xP']} pts</span>"
-            f"<span style='color:#8b949e; font-size:9px;'> | £{player['now_cost']}m</span>"
-        ) if not is_bench else (
-            f"<b>{player['web_name']}</b><br>"
-            f"<span style='color:#00FF7F;'>{player['xP']} pts</span>"
+    # Halfway line
+    fig.add_shape(type="line", x0=2, y0=65, x1=98, y1=65,
+                  line=dict(color="white", width=2))
+
+    # Centre circle + spot
+    fig.add_shape(type="circle", x0=42, y0=55, x1=58, y1=75,
+                  line=dict(color="white", width=2))
+    fig.add_shape(type="circle", x0=49.2, y0=64.2, x1=50.8, y1=65.8,
+                  fillcolor="white", line=dict(width=0))
+
+    # Penalty areas
+    fig.add_shape(type="rect", x0=22, y0=104, x1=78, y1=126,
+                  line=dict(color="white", width=2))
+    fig.add_shape(type="rect", x0=36, y0=116, x1=64, y1=126,
+                  line=dict(color="white", width=2))
+    fig.add_shape(type="rect", x0=22, y0=4, x1=78, y1=26,
+                  line=dict(color="white", width=2))
+    fig.add_shape(type="rect", x0=36, y0=4, x1=64, y1=14,
+                  line=dict(color="white", width=2))
+
+    # Goal mouths
+    fig.add_shape(type="rect", x0=42, y0=126, x1=58, y1=129,
+                  line=dict(color="white", width=2))
+    fig.add_shape(type="rect", x0=42, y0=1, x1=58, y1=4,
+                  line=dict(color="white", width=2))
+
+    pos_y = {"GKP": 18, "DEF": 42, "MID": 72, "FWD": 102}
+
+    def add_player_card(x, y, player, is_bench=False, bench_label=None):
+        pid = player["id"]
+        is_c = pid == captain_id
+        is_v = (vice_id is not None and pid == vice_id)
+
+        photo = player.get("photo_url") or get_player_photo_url(player.get("photo", ""))
+        fixture = get_next_fixture(player["team"], target_gw)
+
+        size = 0.085 if not is_bench else 0.065
+        fig.add_layout_image(
+            dict(
+                source=photo,
+                x=x - size / 2,
+                y=y + size * 0.55,
+                sizex=size,
+                sizey=size * 1.25,
+                xref="x",
+                yref="y",
+                sizing="contain",
+                layer="above",
+            )
         )
+
+        if is_c or is_v:
+            badge = "C" if is_c else "V"
+            badge_color = "#FFD700" if is_c else "#00BFFF"
+            fig.add_annotation(
+                x=x + size * 0.38,
+                y=y + size * 0.9,
+                text=f"<b>{badge}</b>",
+                showarrow=False,
+                font=dict(size=11, color="#000"),
+                bgcolor=badge_color,
+                borderpad=2,
+                bordercolor="#000",
+                borderwidth=1,
+            )
+
+        name = player["web_name"]
+        plate_y = y - 0.04 if not is_bench else y - 0.035
         fig.add_annotation(
-            x=x, y=y, yshift=-32 if not is_bench else -24,
-            text=card_text, showarrow=False,
-            font=dict(family="Arial", size=10), align="center",
-            bgcolor=card_bg, bordercolor=card_border, borderwidth=1, borderpad=3,
+            x=x,
+            y=plate_y,
+            text=(
+                f"<b>{name}</b><br>"
+                f"<span style='font-size:10px; color:#333'>{fixture}</span>"
+            ),
+            showarrow=False,
+            font=dict(size=11, color="#111", family="Arial"),
+            align="center",
+            bgcolor="rgba(255,255,255,0.92)",
+            bordercolor="#ccc",
+            borderwidth=1,
+            borderpad=3,
         )
 
-    for pos, y_val in pos_y_map.items():
-        pos_players = starting_11_df[starting_11_df["position"] == pos]
-        count = len(pos_players)
-        if count > 0:
-            x_coords = [8 + (84 * (i + 1) / (count + 1)) for i in range(count)]
-            for idx, (_, player) in enumerate(pos_players.iterrows()):
-                render_player(x_coords[idx], y_val, player, is_bench=False)
+        if is_bench and bench_label:
+            fig.add_annotation(
+                x=x,
+                y=y + 0.12,
+                text=f"<span style='font-size:9px; color:#aaa'>{bench_label}</span>",
+                showarrow=False,
+            )
 
+    # Starting XI
+    for pos, y_val in pos_y.items():
+        pos_players = starting_11_df[starting_11_df["position"] == pos]
+        n = len(pos_players)
+        if n == 0:
+            continue
+        xs = np.linspace(12, 88, n) if n > 1 else [50]
+        for i, (_, pl) in enumerate(pos_players.iterrows()):
+            add_player_card(xs[i], y_val, pl)
+
+    # Bench
     if not bench_df.empty:
-        b_count = len(bench_df)
-        b_x = [10 + (80 * (i + 1) / (b_count + 1)) for i in range(b_count)]
-        for idx, (_, player) in enumerate(bench_df.iterrows()):
-            render_player(b_x[idx], 8, player, is_bench=True)
+        bench_ordered = bench_df.copy()
+        if "squad_order" in bench_ordered.columns:
+            bench_ordered = bench_ordered.sort_values("squad_order")
+        else:
+            bench_ordered["pos_rank"] = bench_ordered["position"].map(
+                {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}
+            )
+            bench_ordered = bench_ordered.sort_values(["pos_rank", "xP"], ascending=[True, False])
+
+        labels = []
+        for i, (_, pl) in enumerate(bench_ordered.iterrows()):
+            if pl["position"] == "GKP":
+                labels.append("GKP")
+            else:
+                labels.append(f"{i}. {pl['position']}")
+
+        n_b = len(bench_ordered)
+        xs_b = np.linspace(15, 85, n_b)
+        for i, (_, pl) in enumerate(bench_ordered.iterrows()):
+            add_player_card(xs_b[i], -8, pl, is_bench=True, bench_label=labels[i])
 
     fig.update_layout(
-        xaxis=dict(range=[-2, 102], showgrid=False, zeroline=False, showticklabels=False, fixedrange=True),
-        yaxis=dict(range=[-2, 142], showgrid=False, zeroline=False, showticklabels=False,
-                   fixedrange=True, scaleanchor="x", scaleratio=1.28),
-        height=800, margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="#0E1117", paper_bgcolor="#0E1117",
+        xaxis=dict(range=[-2, 102], showgrid=False, zeroline=False,
+                   showticklabels=False, fixedrange=True),
+        yaxis=dict(range=[-18, 135], showgrid=False, zeroline=False,
+                   showticklabels=False, fixedrange=True,
+                   scaleanchor="x", scaleratio=1.15),
+        height=780,
+        margin=dict(l=10, r=10, t=20, b=10),
+        plot_bgcolor="#1a0a2e",
+        paper_bgcolor="#1a0a2e",
+    )
+
+    fig.add_annotation(
+        x=50, y=132,
+        text="<b>PL-Kameratene</b>  ·  Pitch View",
+        showarrow=False,
+        font=dict(size=14, color="#ccc"),
     )
     return fig
 
 # =============================================================================
-# HELPER: best legal starting XI by xP
+# BEST LEGAL XI HELPER
 # =============================================================================
 def select_best_xi(squad_df: pd.DataFrame, xp_col: str = "xP") -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return (starting_11, bench) using a legal formation that maximises xP."""
     if squad_df.empty or len(squad_df) < 11:
         return squad_df, pd.DataFrame()
 
@@ -462,19 +549,13 @@ def select_best_xi(squad_df: pd.DataFrame, xp_col: str = "xP") -> tuple[pd.DataF
     for n_def, n_mid, n_fwd in LEGAL_FORMATIONS:
         if len(defs) < n_def or len(mids) < n_mid or len(fwds) < n_fwd or len(gkp) < 1:
             continue
-        xi = pd.concat([
-            gkp.head(1),
-            defs.head(n_def),
-            mids.head(n_mid),
-            fwds.head(n_fwd),
-        ])
+        xi = pd.concat([gkp.head(1), defs.head(n_def), mids.head(n_mid), fwds.head(n_fwd)])
         score = xi[xp_col].sum()
         if score > best_score:
             best_score = score
             best_xi = xi
 
     if best_xi is None:
-        # fallback: highest xP 11
         best_xi = squad_df.sort_values(xp_col, ascending=False).head(11)
 
     bench = squad_df[~squad_df["id"].isin(best_xi["id"])]
@@ -487,9 +568,7 @@ if menu == "📊 Dashboard Overview":
     st.title(f"📊 PL-Kameratene Dashboard ({selected_gw_label})")
 
     cols = st.columns(4)
-    for pos, col, emoji in zip(
-        ["GKP", "DEF", "MID", "FWD"], cols, ["🧤", "🛡️", "⚙️", "🎯"]
-    ):
+    for pos, col, emoji in zip(["GKP", "DEF", "MID", "FWD"], cols, ["🧤", "🛡️", "⚙️", "🎯"]):
         top = players_df[players_df["position"] == pos].sort_values("xP", ascending=False).iloc[0]
         col.metric(f"{emoji} Top {pos}", top["web_name"], f"{top['xP']} pts")
 
@@ -547,7 +626,7 @@ if menu == "📊 Dashboard Overview":
     st.dataframe(matrix, use_container_width=True, hide_index=True)
 
 # =============================================================================
-# SQUAD & PITCH
+# SQUAD & PITCH VIEW
 # =============================================================================
 elif menu == "🛡️ My Squad & Pitch View":
     st.title("🛡️ My Squad, Bench & Pitch View")
@@ -566,7 +645,6 @@ elif menu == "🛡️ My Squad & Pitch View":
         mids = players_df[players_df["position"] == "MID"].sort_values("now_cost")
         fwds = players_df[players_df["position"] == "FWD"].sort_values("now_cost")
 
-        # Sensible cheap defaults
         default_gkp = gkps.head(2)["id"].tolist()
         default_def = defs.head(5)["id"].tolist()
         default_mid = mids.head(5)["id"].tolist()
@@ -616,7 +694,6 @@ elif menu == "🛡️ My Squad & Pitch View":
             st.session_state.custom_squad_ids = all_ids
         full_squad = players_df[players_df["id"].isin(all_ids)].copy()
     else:
-        # Official picks (or previously staged custom)
         ids = st.session_state.custom_squad_ids or official_ids
         full_squad = players_df[players_df["id"].isin(ids)].copy()
         if picks_data and not st.session_state.custom_squad_ids:
@@ -631,8 +708,19 @@ elif menu == "🛡️ My Squad & Pitch View":
         bench_df = pd.DataFrame()
 
     if not starting_11.empty:
-        captain_row = starting_11.sort_values("xP", ascending=False).iloc[0]
-        captain_id = captain_row["id"]
+        # Captain & vice
+        captain_id = starting_11.sort_values("xP", ascending=False).iloc[0]["id"]
+        vice_id = None
+        if picks_data:
+            for p in picks_data.get("picks", []):
+                if p.get("is_captain"):
+                    captain_id = p["element"]
+                if p.get("is_vice_captain"):
+                    vice_id = p["element"]
+        if captain_id not in starting_11["id"].values:
+            captain_id = starting_11.sort_values("xP", ascending=False).iloc[0]["id"]
+
+        captain_row = starting_11[starting_11["id"] == captain_id].iloc[0]
         total_xp = (starting_11["xP"].sum() + captain_row["xP"]).round(2)
         total_cost = full_squad["now_cost"].sum().round(1)
 
@@ -643,7 +731,14 @@ elif menu == "🛡️ My Squad & Pitch View":
         m4.metric("Projected Points", f"{total_xp:.2f}")
 
         st.subheader(f"🏟️ Pitch — {selected_gw_label}")
-        st.plotly_chart(generate_fpl_pitch(starting_11, bench_df, captain_id), use_container_width=True)
+        pitch_fig = generate_fpl_pitch(
+            starting_11,
+            bench_df,
+            captain_id=captain_id,
+            vice_id=vice_id,
+            target_gw=selected_gw_num,
+        )
+        st.plotly_chart(pitch_fig, use_container_width=True)
 
         st.markdown("---")
         st.subheader(f"📅 Squad xP Breakdown (GW1–GW{MAX_GW_HORIZON})")
@@ -660,7 +755,6 @@ elif menu == "🛡️ My Squad & Pitch View":
 elif menu == "🔄 Transfer Planner":
     st.title("🔄 Transfer & Financial Planner")
 
-    # Resolve current squad
     if st.session_state.custom_squad_ids and len(st.session_state.custom_squad_ids) >= 15:
         current_ids = st.session_state.custom_squad_ids
     elif picks_data:
@@ -737,7 +831,6 @@ elif menu == "🔄 Transfer Planner":
         if hit_cost:
             st.warning(f"This transfer would cost a **-4 hit**. Net single-GW gain: **{net_single:+.2f}**")
 
-        # FDR comparison
         st.markdown("#### 🗓️ Fixture Difficulty Comparison")
         st.caption("🟢1  🔵2  ⚪3  🟠4  🔴5")
 
