@@ -514,23 +514,42 @@ def generate_fpl_pitch(starting_11_df, bench_df, captain_id, vice_id=None, targe
     fig.add_annotation(x=50, y=132, text="<b>PL-Kameratene</b>  ·  Pitch View", showarrow=False, font=dict(size=14, color="#ccc"))
     return fig
 
-def select_best_xi(squad_df, xp_col="xP"):
+def select_xi_with_formation(squad_df, xp_col="xP", formation=None):
+    """Select starting XI. If formation is given as (DEF, MID, FWD) it forces that shape."""
     if squad_df.empty or len(squad_df) < 11:
         return squad_df, pd.DataFrame()
+
     gkp = squad_df[squad_df["position"] == "GKP"].sort_values(xp_col, ascending=False)
     defs = squad_df[squad_df["position"] == "DEF"].sort_values(xp_col, ascending=False)
     mids = squad_df[squad_df["position"] == "MID"].sort_values(xp_col, ascending=False)
     fwds = squad_df[squad_df["position"] == "FWD"].sort_values(xp_col, ascending=False)
-    best_score, best_xi = -1, None
-    for n_def, n_mid, n_fwd in LEGAL_FORMATIONS:
-        if len(defs) < n_def or len(mids) < n_mid or len(fwds) < n_fwd or len(gkp) < 1:
-            continue
-        xi = pd.concat([gkp.head(1), defs.head(n_def), mids.head(n_mid), fwds.head(n_fwd)])
-        score = xi[xp_col].sum()
-        if score > best_score:
-            best_score, best_xi = score, xi
-    if best_xi is None:
-        best_xi = squad_df.sort_values(xp_col, ascending=False).head(11)
+
+    if formation is None:
+        # Auto – best legal formation by xP
+        best_score = -1
+        best_xi = None
+        for n_def, n_mid, n_fwd in LEGAL_FORMATIONS:
+            if len(defs) < n_def or len(mids) < n_mid or len(fwds) < n_fwd or len(gkp) < 1:
+                continue
+            xi = pd.concat([gkp.head(1), defs.head(n_def), mids.head(n_mid), fwds.head(n_fwd)])
+            score = xi[xp_col].sum()
+            if score > best_score:
+                best_score = score
+                best_xi = xi
+        if best_xi is None:
+            best_xi = squad_df.sort_values(xp_col, ascending=False).head(11)
+    else:
+        n_def, n_mid, n_fwd = formation
+        if (len(defs) < n_def or len(mids) < n_mid or len(fwds) < n_fwd or len(gkp) < 1):
+            # Not enough players – fall back to auto
+            return select_xi_with_formation(squad_df, xp_col, formation=None)
+        best_xi = pd.concat([
+            gkp.head(1),
+            defs.head(n_def),
+            mids.head(n_mid),
+            fwds.head(n_fwd),
+        ])
+
     bench = squad_df[~squad_df["id"].isin(best_xi["id"])]
     return best_xi, bench
 
@@ -577,7 +596,7 @@ if menu == "📊 Dashboard Overview":
         st.info("No price changes recorded yet this gameweek.")
 
 # =============================================================================
-# SQUAD & PITCH VIEW
+# SQUAD & PITCH VIEW  (with Formation selector)
 # =============================================================================
 elif menu == "🛡️ My Squad & Pitch View":
     st.title("🛡️ My Squad, Bench & Pitch View")
@@ -648,7 +667,37 @@ elif menu == "🛡️ My Squad & Pitch View":
             full_squad = full_squad.sort_values("squad_order")
 
     if len(full_squad) >= 11:
-        starting_11, bench_df = select_best_xi(full_squad, "xP")
+        # ---------- Formation selector ----------
+        formation_options = {
+            "Auto (best xP)": None,
+            "3-4-3": (3, 4, 3),
+            "3-5-2": (3, 5, 2),
+            "4-3-3": (4, 3, 3),
+            "4-4-2": (4, 4, 2),
+            "4-5-1": (4, 5, 1),
+            "5-3-2": (5, 3, 2),
+            "5-4-1": (5, 4, 1),
+        }
+
+        selected_formation_label = st.selectbox(
+            "📐 Formation",
+            options=list(formation_options.keys()),
+            index=0,
+            key="formation_selector",
+        )
+        forced_formation = formation_options[selected_formation_label]
+
+        starting_11, bench_df = select_xi_with_formation(
+            full_squad, "xP", formation=forced_formation
+        )
+
+        # Show actual formation on pitch
+        def_count = len(starting_11[starting_11["position"] == "DEF"])
+        mid_count = len(starting_11[starting_11["position"] == "MID"])
+        fwd_count = len(starting_11[starting_11["position"] == "FWD"])
+        st.caption(f"Current formation on pitch: **{def_count}-{mid_count}-{fwd_count}**")
+
+        # Captain & vice
         captain_id = starting_11.sort_values("xP", ascending=False).iloc[0]["id"]
         vice_id = None
         if picks_data:
@@ -900,7 +949,7 @@ elif menu == "🎰 Chip Simulator":
         st.stop()
 
     squad = players_df[players_df["id"].isin(ids)].copy()
-    xi, bench = select_best_xi(squad, "xP")
+    xi, bench = select_xi_with_formation(squad, "xP")
     base = xi["xP"].sum()
     capt = xi["xP"].max()
 
