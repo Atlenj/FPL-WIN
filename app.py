@@ -11,7 +11,7 @@ from typing import Optional, Dict, List, Any
 import difflib
 
 # =============================================================================
-# SAFE UNDERSTAT IMPORT (never crashes the app)
+# SAFE UNDERSTAT IMPORT
 # =============================================================================
 UNDERSTAT_AVAILABLE = False
 UnderstatClient = None
@@ -28,7 +28,7 @@ except Exception:
 PAGE_TITLE = "PL-Kameratene"
 FPL_BASE = "https://fantasy.premierleague.com/api"
 DEFAULT_MANAGER_ID = "475093"
-MAX_GW_HORIZON = 38          # ← Full season
+MAX_GW_HORIZON = 38
 CACHE_TTL = 3600
 XGI_WEIGHT = {"GKP": 0.0, "DEF": 0.85, "MID": 1.35, "FWD": 1.55}
 FDR_WEIGHT = 0.07
@@ -48,7 +48,6 @@ STATUS_MAP = {
     "s": ("🔴", "Suspended"), "u": ("❓", "Unavailable"), "n": ("❌", "Not available"),
 }
 
-# Updated from FPL Assistant (5–7 Aug 2026) + official FPL expected list
 SET_PIECE_DATA = {
     "Arsenal": {
         "Penalties": [("Saka", 60), ("Gyökeres", 25), ("Ødegaard", 15)],
@@ -931,6 +930,7 @@ elif menu == "📅 Fixture Analyzer":
 
 elif menu == "📅 Multi-GW Transfer Plan":
     st.title("📅 Multi-GW Transfer Plan")
+
     ids = st.session_state.custom_squad_ids or (
         [p["element"] for p in picks_data.get("picks", [])] if picks_data else []
     )
@@ -938,43 +938,141 @@ elif menu == "📅 Multi-GW Transfer Plan":
         st.warning("Need a full squad first.")
         st.stop()
 
-    active = players_df[players_df["id"].isin(ids)]
+    active = players_df[players_df["id"].isin(ids)].copy()
     bank = float(st.session_state.bank_balance)
-    ft = st.number_input("Free Transfers", 0, 5, 1)
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        out_id = st.selectbox("Sell", active["id"], format_func=lambda x: active.loc[active["id"]==x, "display_label"].values[0])
-    with c2:
-        maxp = active.loc[active["id"] == out_id, "now_cost"].values[0] + bank
-        tgts = players_df[
-            (~players_df["id"].isin(ids))
-            & (players_df["now_cost"] <= maxp)
-            & (players_df["position"] == active.loc[active["id"]==out_id, "position"].values[0])
-        ]
-        in_id = st.selectbox(
-            "Buy",
-            tgts["id"] if not tgts.empty else [],
-            format_func=lambda x: tgts.loc[tgts["id"]==x, "display_label"].values[0] if not tgts.empty else ""
+    # --- Controls ---
+    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns(3)
+    with col_ctrl1:
+        ft = st.number_input("Free Transfers", 0, 5, 1)
+    with col_ctrl2:
+        horizon = st.slider("Look ahead (GWs)", 1, 10, 4)
+    with col_ctrl3:
+        start_gw = st.selectbox(
+            "Starting from",
+            list(range(selected_gw_num, min(selected_gw_num + 6, 39))),
+            index=0
         )
-    with c3:
-        pgw = st.selectbox("For GW", list(range(selected_gw_num, min(selected_gw_num + 8, 39))))
 
-    if st.button("Add to plan") and in_id:
-        po = players_df[players_df["id"] == out_id].iloc[0]
-        pi = players_df[players_df["id"] == in_id].iloc[0]
-        st.session_state.multi_gw_plan.append({
-            "gw": pgw, "out": po["web_name"], "in": pi["web_name"],
-            "cost": round(pi["now_cost"] - po["now_cost"], 1),
-            "xp": round(pi[f"GW{pgw}_xP"] - po[f"GW{pgw}_xP"], 2)
-        })
-        st.rerun()
+    end_gw = min(start_gw + horizon - 1, 38)
+    st.markdown(f"**Planning window:** GW{start_gw} → GW{end_gw}")
 
+    # --- Select players ---
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.subheader("Sell")
+        out_id = st.selectbox(
+            "Player to sell",
+            active["id"],
+            format_func=lambda x: active.loc[active["id"] == x, "display_label"].values[0],
+            key="sell_player"
+        )
+        out_player = players_df[players_df["id"] == out_id].iloc[0]
+
+        st.markdown("**Fixtures (selling):**")
+        out_fixtures = []
+        for g in range(start_gw, end_gw + 1):
+            fix = team_fixture_details.get(out_player["team"], {}).get(g)
+            if fix:
+                out_fixtures.append(f"GW{g}: {fix['opponent']} ({fix['venue']}) [FDR {fix['fdr']}]")
+            else:
+                out_fixtures.append(f"GW{g}: –")
+        st.write("  \n".join(out_fixtures))
+
+    with c2:
+        st.subheader("Buy")
+        max_price = out_player["now_cost"] + bank
+        possible = players_df[
+            (~players_df["id"].isin(ids)) &
+            (players_df["now_cost"] <= max_price) &
+            (players_df["position"] == out_player["position"]) &
+            (players_df["status"].isin(["a", "d"]))
+        ].sort_values("xP", ascending=False)
+
+        if possible.empty:
+            st.warning("No affordable players in the same position.")
+            in_id = None
+        else:
+            in_id = st.selectbox(
+                "Player to buy",
+                possible["id"],
+                format_func=lambda x: possible.loc[possible["id"] == x, "display_label"].values[0],
+                key="buy_player"
+            )
+            in_player = players_df[players_df["id"] == in_id].iloc[0]
+
+            st.markdown("**Fixtures (buying):**")
+            in_fixtures = []
+            for g in range(start_gw, end_gw + 1):
+                fix = team_fixture_details.get(in_player["team"], {}).get(g)
+                if fix:
+                    in_fixtures.append(f"GW{g}: {fix['opponent']} ({fix['venue']}) [FDR {fix['fdr']}]")
+                else:
+                    in_fixtures.append(f"GW{g}: –")
+            st.write("  \n".join(in_fixtures))
+
+    # --- Comparison table ---
+    if in_id is not None:
+        st.markdown("---")
+        st.subheader("xP Comparison")
+
+        comparison_rows = []
+        total_out = 0.0
+        total_in = 0.0
+
+        for g in range(start_gw, end_gw + 1):
+            out_xp = out_player.get(f"GW{g}_xP", 0)
+            in_xp = in_player.get(f"GW{g}_xP", 0)
+            total_out += out_xp
+            total_in += in_xp
+
+            out_fix = team_fixture_details.get(out_player["team"], {}).get(g)
+            in_fix = team_fixture_details.get(in_player["team"], {}).get(g)
+
+            comparison_rows.append({
+                "GW": g,
+                "Out xP": round(out_xp, 2),
+                "Out Fixture": f"{out_fix['opponent']} ({out_fix['venue']})" if out_fix else "–",
+                "In xP": round(in_xp, 2),
+                "In Fixture": f"{in_fix['opponent']} ({in_fix['venue']})" if in_fix else "–",
+                "Diff": round(in_xp - out_xp, 2)
+            })
+
+        comp_df = pd.DataFrame(comparison_rows)
+        st.dataframe(comp_df, use_container_width=True, hide_index=True)
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Out xP", f"{total_out:.1f}")
+        m2.metric("Total In xP", f"{total_in:.1f}")
+        m3.metric("Net Gain", f"{total_in - total_out:+.1f}")
+        cost_diff = round(in_player["now_cost"] - out_player["now_cost"], 1)
+        m4.metric("Price Diff", f"£{cost_diff:+.1f}")
+
+        if st.button("➕ Add this transfer to plan", type="primary"):
+            st.session_state.multi_gw_plan.append({
+                "from_gw": start_gw,
+                "to_gw": end_gw,
+                "out": out_player["web_name"],
+                "in": in_player["web_name"],
+                "cost": cost_diff,
+                "xp_gain": round(total_in - total_out, 2),
+                "horizon": horizon
+            })
+            st.success(f"Added: {out_player['web_name']} → {in_player['web_name']}")
+            st.rerun()
+
+    # --- Current plan ---
     if st.session_state.multi_gw_plan:
-        st.dataframe(pd.DataFrame(st.session_state.multi_gw_plan), hide_index=True)
+        st.markdown("---")
+        st.subheader("Your Transfer Plan")
+        plan_df = pd.DataFrame(st.session_state.multi_gw_plan)
+        st.dataframe(plan_df, use_container_width=True, hide_index=True)
+
         hits = max(0, len(st.session_state.multi_gw_plan) - ft) * 4
-        st.metric("Projected hits", f"-{hits}")
-        if st.button("Clear plan"):
+        st.metric("Projected hits", f"-{hits} pts")
+
+        if st.button("🗑️ Clear plan"):
             st.session_state.multi_gw_plan = []
             st.rerun()
 
@@ -1055,7 +1153,6 @@ elif menu == "🔍 Player Explorer":
     diff = st.toggle("Differentials only")
     own = st.slider("Max own%", 1.0, 50.0, 12.0) if diff else 100.0
 
-    # Limit how many future GWs are shown so the table stays readable
     show_horizon = st.slider("Show next X GWs", 4, 15, 8)
 
     f = players_df[players_df["position"].isin(pos) & (players_df["now_cost"] <= mx)]
