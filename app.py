@@ -20,7 +20,6 @@ try:
     from understatapi import UnderstatClient
     UNDERSTAT_AVAILABLE = True
 except Exception:
-    # Catches ImportError + headless browser crash on Streamlit Cloud / Python 3.14
     UNDERSTAT_AVAILABLE = False
 
 # =============================================================================
@@ -29,7 +28,7 @@ except Exception:
 PAGE_TITLE = "PL-Kameratene"
 FPL_BASE = "https://fantasy.premierleague.com/api"
 DEFAULT_MANAGER_ID = "475093"
-MAX_GW_HORIZON = 10
+MAX_GW_HORIZON = 38          # ← Full season
 CACHE_TTL = 3600
 XGI_WEIGHT = {"GKP": 0.0, "DEF": 0.85, "MID": 1.35, "FWD": 1.55}
 FDR_WEIGHT = 0.07
@@ -258,8 +257,7 @@ def load_understat_players(season: str = UNDERSTAT_SEASON):
         df["xG90"]  = (df.get("xG", 0) / df["time"].clip(lower=1)) * 90
         df["xA90"]  = (df.get("xA", 0) / df["time"].clip(lower=1)) * 90
         return df
-    except Exception as e:
-        # Fail silently – app continues with official FPL data only
+    except Exception:
         return pd.DataFrame()
 
 def _norm_name(s: str) -> str:
@@ -897,7 +895,7 @@ elif menu == "🎯 Set-Piece Takers":
 elif menu == "📅 Fixture Analyzer":
     st.title("📅 Fixture Analyzer")
     start = st.slider("From GW", 1, MAX_GW_HORIZON, selected_gw_num)
-    n = st.slider("GWs to show", 4, 10, 6)
+    n = st.slider("GWs to show", 4, 15, 8)
     end = min(start + n - 1, 38)
 
     if st.button("📊 Rank teams: Easiest → Hardest", type="primary"):
@@ -960,7 +958,7 @@ elif menu == "📅 Multi-GW Transfer Plan":
             format_func=lambda x: tgts.loc[tgts["id"]==x, "display_label"].values[0] if not tgts.empty else ""
         )
     with c3:
-        pgw = st.selectbox("For GW", list(range(selected_gw_num, min(selected_gw_num + 6, 39))))
+        pgw = st.selectbox("For GW", list(range(selected_gw_num, min(selected_gw_num + 8, 39))))
 
     if st.button("Add to plan") and in_id:
         po = players_df[players_df["id"] == out_id].iloc[0]
@@ -991,7 +989,7 @@ elif menu == "💡 Transfer Recommendations":
 
     squad = players_df[players_df["id"].isin(ids)].copy()
     bank = float(st.session_state.bank_balance)
-    hcols = [f"GW{g}_xP" for g in range(selected_gw_num, min(MAX_GW_HORIZON + 1, selected_gw_num + 5))]
+    hcols = [f"GW{g}_xP" for g in range(selected_gw_num, min(MAX_GW_HORIZON + 1, selected_gw_num + 6))]
     players_df["hx"] = players_df[hcols].mean(axis=1)
     squad["hx"] = squad[hcols].mean(axis=1)
 
@@ -1057,6 +1055,9 @@ elif menu == "🔍 Player Explorer":
     diff = st.toggle("Differentials only")
     own = st.slider("Max own%", 1.0, 50.0, 12.0) if diff else 100.0
 
+    # Limit how many future GWs are shown so the table stays readable
+    show_horizon = st.slider("Show next X GWs", 4, 15, 8)
+
     f = players_df[players_df["position"].isin(pos) & (players_df["now_cost"] <= mx)]
     if diff:
         f = f[f["selected_by_percent"] <= own]
@@ -1064,7 +1065,7 @@ elif menu == "🔍 Player Explorer":
         f = f[f["web_name"].str.lower().str.contains(q.lower(), na=False)]
     f = f.sort_values(selected_gw_col, ascending=False)
 
-    gcols = [f"GW{i}_xP" for i in range(selected_gw_num, MAX_GW_HORIZON + 1)]
+    gcols = [f"GW{i}_xP" for i in range(selected_gw_num, min(selected_gw_num + show_horizon, MAX_GW_HORIZON + 1))]
     show_cols = ["web_name", "position", "team_short", "now_cost", "selected_by_percent", "status_badge"] + gcols
     if "us_xGI90" in f.columns:
         show_cols.insert(6, "us_xGI90")
@@ -1075,7 +1076,7 @@ elif menu == "🔍 Player Explorer":
         "now_cost": "Price", "selected_by_percent": "Own%", "status_badge": "Status",
         "us_xGI90": "US xGI90"
     }
-    for i in range(selected_gw_num, MAX_GW_HORIZON + 1):
+    for i in range(selected_gw_num, min(selected_gw_num + show_horizon, MAX_GW_HORIZON + 1)):
         rename[f"GW{i}_xP"] = f"GW{i}"
     show = show.rename(columns=rename)
     st.dataframe(show, use_container_width=True, hide_index=True)
