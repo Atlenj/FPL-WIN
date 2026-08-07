@@ -10,11 +10,17 @@ import json
 from typing import Optional, Dict, List, Any
 import difflib
 
-# Optional – install with: pip install understatapi
+# =============================================================================
+# SAFE UNDERSTAT IMPORT (never crashes the app)
+# =============================================================================
+UNDERSTAT_AVAILABLE = False
+UnderstatClient = None
+
 try:
     from understatapi import UnderstatClient
     UNDERSTAT_AVAILABLE = True
-except ImportError:
+except Exception:
+    # Catches ImportError + headless browser crash on Streamlit Cloud / Python 3.14
     UNDERSTAT_AVAILABLE = False
 
 # =============================================================================
@@ -229,11 +235,11 @@ def fetch_picks(mid, gw):
     return None
 
 # =============================================================================
-# UNDERSTAT
+# UNDERSTAT (safe)
 # =============================================================================
 @st.cache_data(ttl=CACHE_TTL, show_spinner="Fetching Understat xG/xA…")
 def load_understat_players(season: str = UNDERSTAT_SEASON):
-    if not UNDERSTAT_AVAILABLE:
+    if not UNDERSTAT_AVAILABLE or UnderstatClient is None:
         return pd.DataFrame()
     try:
         with UnderstatClient() as understat:
@@ -253,7 +259,7 @@ def load_understat_players(season: str = UNDERSTAT_SEASON):
         df["xA90"]  = (df.get("xA", 0) / df["time"].clip(lower=1)) * 90
         return df
     except Exception as e:
-        st.warning(f"Understat fetch failed: {e}")
+        # Fail silently – app continues with official FPL data only
         return pd.DataFrame()
 
 def _norm_name(s: str) -> str:
@@ -606,8 +612,8 @@ if menu == "📊 Dashboard Overview":
 
     if UNDERSTAT_AVAILABLE and not us_df.empty:
         st.caption(f"✅ Understat xG/xA blended (season {UNDERSTAT_SEASON})")
-    elif not UNDERSTAT_AVAILABLE:
-        st.caption("ℹ️ Install `understatapi` for richer xG/xA data")
+    else:
+        st.caption("ℹ️ Using official FPL xG/xA only (Understat disabled on this environment)")
 
     cols = st.columns(4)
     for pos, col, em in zip(["GKP", "DEF", "MID", "FWD"], cols, ["🧤", "🛡️", "⚙️", "🎯"]):
@@ -693,7 +699,7 @@ elif menu == "🛡️ My Squad & Pitch View":
                         max_selections=remaining
                     )
                     if selected:
-                        new_ids = list(dict.fromkeys(current_ids + selected))  # preserve order, unique
+                        new_ids = list(dict.fromkeys(current_ids + selected))
                         st.session_state.custom_squad_ids = new_ids
                         st.rerun()
         else:
