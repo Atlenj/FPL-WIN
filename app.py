@@ -31,8 +31,8 @@ FORM_WEIGHT = 0.18
 MINUTES_THRESHOLD = 60.0
 EP_BLEND = 0.55
 TEAM_STRENGTH_WEIGHT = 0.04
-UNDERSTAT_BLEND = 0.55          # weight given to Understat xGI90 vs FPL xGI
-UNDERSTAT_SEASON = "2026"       # start year of current season (2026/27)
+UNDERSTAT_BLEND = 0.55
+UNDERSTAT_SEASON = "2026"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -43,92 +43,107 @@ STATUS_MAP = {
     "s": ("🔴", "Suspended"), "u": ("❓", "Unavailable"), "n": ("❌", "Not available"),
 }
 
-# Top 3 set-piece takers + estimated % chance (2026/27 early season)
+# Updated from FPL Assistant (5–7 Aug 2026) + official FPL expected list
 SET_PIECE_DATA = {
     "Arsenal": {
-        "Penalties": [("Saka", 65), ("Gyökeres", 25), ("Ødegaard", 10)],
-        "Free Kicks": [("Rice", 60), ("Saka", 30), ("Ødegaard", 10)],
-        "Corners": [("Rice", 45), ("Saka", 35), ("Madueke", 20)],
+        "Penalties": [("Saka", 60), ("Gyökeres", 25), ("Ødegaard", 15)],
+        "Free Kicks": [("Rice", 50), ("Saka", 30), ("Eze", 20)],
+        "Corners": [("Rice", 40), ("Saka", 30), ("Madueke", 20), ("Ødegaard", 10)],
     },
     "Aston Villa": {
-        "Penalties": [("Buendía", 55), ("Watkins", 35), ("Rogers", 10)],
-        "Free Kicks": [("Buendía", 70), ("Cash", 20), ("Bailey", 10)],
-        "Corners": [("Cash", 50), ("Bailey", 30), ("Buendía", 20)],
+        "Penalties": [("Buendía", 55), ("Watkins", 45)],
+        "Free Kicks": [("Buendía", 70)],
+        "Corners": [("Digne", 35), ("Cash", 35), ("McGinn", 30)],
     },
     "Bournemouth": {
-        "Penalties": [("Kluivert", 45), ("Tavernier", 35), ("Kroupi", 20)],
-        "Free Kicks": [("Tavernier", 40), ("Ünal", 30), ("Kluivert", 30)],
-        "Corners": [("Tavernier", 40), ("Scott", 35), ("Cook", 25)],
+        "Penalties": [("Kluivert", 35), ("Tavernier", 30), ("Kroupi", 35)],
+        "Free Kicks": [("Tavernier", 30), ("Kluivert", 25), ("Ünal", 25), ("Brooks", 20)],
+        "Corners": [("Tavernier", 35), ("Scott", 30), ("Cook", 20), ("Brooks", 15)],
     },
     "Brentford": {
         "Penalties": [("Thiago", 55), ("Schade", 25), ("Jensen", 20)],
-        "Free Kicks": [("Lewis-Potter", 45), ("Jensen", 35), ("Damsgaard", 20)],
-        "Corners": [("Jensen", 45), ("Ouattara", 30), ("Janelt", 25)],
+        "Free Kicks": [("Lewis-Potter", 40), ("Jensen", 35), ("Damsgaard", 25)],
+        "Corners": [("Jensen", 40), ("Damsgaard", 25), ("Janelt", 20), ("Ouattara", 15)],
     },
     "Brighton": {
-        "Penalties": [("Welbeck", 55), ("O'Riley", 30), ("Mitoma", 15)],
-        "Free Kicks": [("De Cuyper", 40), ("Ayari", 35), ("Dunk", 25)],
-        "Corners": [("Groß", 40), ("Minteh", 35), ("Boscagli", 25)],
+        "Penalties": [("Groß", 40), ("Welbeck", 40), ("O'Riley", 20)],
+        "Free Kicks": [("Ayari", 25), ("Dunk", 25), ("De Cuyper", 25), ("Gómez", 25)],
+        "Corners": [("Groß", 40), ("Boscagli", 30), ("Minteh", 30)],
     },
     "Chelsea": {
-        "Penalties": [("Palmer", 70), ("Fernández", 20), ("João Pedro", 10)],
-        "Free Kicks": [("James", 40), ("Palmer", 35), ("Fernández", 25)],
-        "Corners": [("James", 40), ("Neto", 35), ("Fernández", 25)],
+        "Penalties": [("Palmer", 65), ("Fernández", 20), ("Estêvão", 15)],
+        "Free Kicks": [("James", 35), ("Fernández", 25), ("Palmer", 25), ("Neto", 15)],
+        "Corners": [("James", 35), ("Neto", 30), ("Fernández", 25), ("Estêvão", 10)],
     },
     "Crystal Palace": {
-        "Penalties": [("Mateta", 70), ("Sarr", 20), ("Devenny", 10)],
-        "Free Kicks": [("Pino", 45), ("Devenny", 35), ("Eze", 20)],
-        "Corners": [("Johnson", 40), ("Wharton", 35), ("Hughes", 25)],
+        "Penalties": [("Mateta", 65), ("Sarr", 25), ("Devenny", 10)],
+        "Free Kicks": [("Pino", 40), ("Devenny", 30), ("Johnson", 30)],
+        "Corners": [("Johnson", 35), ("Wharton", 30), ("Hughes", 20), ("Kamada", 15)],
     },
     "Everton": {
         "Penalties": [("Ndiaye", 50), ("Garner", 30), ("Beto", 20)],
-        "Free Kicks": [("Garner", 75), ("McNeil", 15), ("Dewsbury-Hall", 10)],
-        "Corners": [("Garner", 50), ("McNeil", 30), ("Dewsbury-Hall", 20)],
+        "Free Kicks": [("Garner", 60), ("McNeil", 40)],
+        "Corners": [("Garner", 40), ("Dewsbury-Hall", 30), ("McNeil", 30)],
     },
     "Fulham": {
-        "Penalties": [("Jiménez", 60), ("Robinson", 25), ("Wilson", 15)],
-        "Free Kicks": [("Wilson", 50), ("Iwobi", 30), ("Lukić", 20)],
-        "Corners": [("Iwobi", 45), ("Lukić", 35), ("Wilson", 20)],
+        "Penalties": [("Robinson", 50), ("Iwobi", 30), ("Lukić", 20)],
+        "Free Kicks": [("Iwobi", 50), ("Lukić", 50)],
+        "Corners": [("Iwobi", 45), ("Lukić", 40), ("Kevin", 15)],
     },
     "Leeds": {
-        "Penalties": [("Calvert-Lewin", 55), ("Nmecha", 25), ("Piroe", 20)],
-        "Free Kicks": [("Stach", 60), ("Longstaff", 30), ("Aaronson", 10)],
-        "Corners": [("Stach", 50), ("Longstaff", 35), ("Justin", 15)],
+        "Penalties": [("Calvert-Lewin", 60), ("Stach", 20), ("Longstaff", 20)],
+        "Free Kicks": [("Stach", 50), ("Longstaff", 30), ("Aaronson", 20)],
+        "Corners": [("Stach", 45), ("Longstaff", 35), ("Tanaka", 20)],
     },
     "Liverpool": {
-        "Penalties": [("Szoboszlai", 40), ("Gakpo", 35), ("Mac Allister", 25)],
-        "Free Kicks": [("Szoboszlai", 55), ("Wirtz", 30), ("Gakpo", 15)],
-        "Corners": [("Szoboszlai", 40), ("Gakpo", 35), ("Wirtz", 25)],
+        "Penalties": [("Szoboszlai", 35), ("Gakpo", 30), ("Mac Allister", 25), ("Isak", 10)],
+        "Free Kicks": [("Szoboszlai", 55), ("Wirtz", 45)],
+        "Corners": [("Szoboszlai", 40), ("Gakpo", 30), ("Wirtz", 30)],
     },
     "Man City": {
-        "Penalties": [("Haaland", 75), ("Marmoush", 15), ("Foden", 10)],
-        "Free Kicks": [("Marmoush", 40), ("Cherki", 35), ("Reijnders", 25)],
-        "Corners": [("Cherki", 35), ("Reijnders", 30), ("Marmoush", 20)],
+        "Penalties": [("Haaland", 75), ("Cherki", 10), ("Marmoush", 10), ("Foden", 5)],
+        "Free Kicks": [("Cherki", 30), ("Marmoush", 30), ("Foden", 25), ("Reijnders", 15)],
+        "Corners": [("Foden", 30), ("Cherki", 30), ("Reijnders", 25), ("Marmoush", 15)],
     },
     "Man Utd": {
-        "Penalties": [("Fernandes", 85), ("Mbeumo", 10), ("Amad", 5)],
+        "Penalties": [("Fernandes", 85), ("Mbeumo", 10), ("Mount", 5)],
         "Free Kicks": [("Fernandes", 70), ("Mbeumo", 20), ("Mount", 10)],
         "Corners": [("Fernandes", 50), ("Mbeumo", 30), ("Amad", 20)],
     },
     "Newcastle": {
-        "Penalties": [("Guimarães", 45), ("Woltemade", 35), ("Gordon", 20)],
-        "Free Kicks": [("Hall", 40), ("Schär", 35), ("Guimarães", 25)],
-        "Corners": [("Hall", 40), ("Guimarães", 35), ("Elanga", 25)],
+        "Penalties": [("Guimarães", 40), ("Woltemade", 35), ("Hall", 15), ("Schär", 10)],
+        "Free Kicks": [("Hall", 40), ("Guimarães", 30), ("Schär", 30)],
+        "Corners": [("Hall", 40), ("Guimarães", 30), ("Elanga", 20), ("Miley", 10)],
     },
     "Nott'm Forest": {
-        "Penalties": [("Wood", 55), ("Gibbs-White", 30), ("Igor Jesus", 15)],
-        "Free Kicks": [("Gibbs-White", 65), ("Murillo", 20), ("Anderson", 15)],
-        "Corners": [("Hutchinson", 40), ("Williams", 35), ("Ndoye", 25)],
+        "Penalties": [("Wood", 55), ("Gibbs-White", 45)],
+        "Free Kicks": [("Gibbs-White", 60), ("Murillo", 20), ("Williams", 20)],
+        "Corners": [("Hutchinson", 40), ("Williams", 35), ("Bakwa", 25)],
     },
     "Sunderland": {
-        "Penalties": [("Diarra", 50), ("Le Fée", 35), ("Mayenda", 15)],
-        "Free Kicks": [("Xhaka", 45), ("Le Fée", 40), ("Mundle", 15)],
+        "Penalties": [("Diarra", 55), ("Le Fée", 45)],
+        "Free Kicks": [("Xhaka", 50), ("Le Fée", 50)],
         "Corners": [("Xhaka", 40), ("Hume", 35), ("Le Fée", 25)],
     },
     "Spurs": {
-        "Penalties": [("Solanke", 45), ("Kudus", 30), ("Simons", 25)],
-        "Free Kicks": [("Porro", 40), ("Simons", 35), ("Kudus", 25)],
-        "Corners": [("Tel", 35), ("Simons", 35), ("Porro", 30)],
+        "Penalties": [("Solanke", 50), ("Kudus", 20), ("Simons", 15), ("Porro", 15)],
+        "Free Kicks": [("Porro", 35), ("Kudus", 25), ("Simons", 20), ("Tel", 20)],
+        "Corners": [("Porro", 30), ("Kudus", 25), ("Tel", 25), ("Simons", 20)],
+    },
+    "Coventry": {
+        "Penalties": [("Wright", 60), ("Rudoni", 25), ("Torp", 15)],
+        "Free Kicks": [("Rudoni", 40), ("Torp", 40), ("van Ewijk", 20)],
+        "Corners": [("Grimes", 40), ("Rudoni", 30), ("Torp", 30)],
+    },
+    "Hull": {
+        "Penalties": [("McBurnie", 40), ("Crooks", 30), ("Slater", 20), ("Giles", 10)],
+        "Free Kicks": [("Giles", 40), ("Belloumi", 40), ("Slater", 20)],
+        "Corners": [("Giles", 35), ("Belloumi", 35), ("Slater", 30)],
+    },
+    "Ipswich": {
+        "Penalties": [("Clarke", 40), ("Philogene", 35), ("Hirst", 25)],
+        "Free Kicks": [("Philogene", 30), ("Davis", 30), ("Núñez", 20), ("Clarke", 20)],
+        "Corners": [("Philogene", 30), ("Davis", 30), ("Núñez", 20), ("Clarke", 20)],
     },
 }
 
@@ -264,7 +279,6 @@ def merge_understat(fpl_df: pd.DataFrame, under_df: pd.DataFrame) -> pd.DataFram
         on="norm_name", how="left"
     )
 
-    # Fuzzy match remaining
     unmatched = merged["xGI90"].isna()
     if unmatched.any():
         under_names = under_df["norm_name"].tolist()
@@ -351,7 +365,6 @@ def get_photo(code):
 
 players_df["photo_url"] = players_df.get("photo", "").apply(get_photo)
 
-# Fixtures
 team_fixtures = {}
 team_fixture_details = {}
 for f in fixtures_data:
@@ -369,11 +382,9 @@ def get_next_fixture(tid, from_gw):
         if m: return f"{m['opponent']} ({m['venue']})"
     return "–"
 
-# Understat merge
 us_df = load_understat_players(UNDERSTAT_SEASON)
 players_df = merge_understat(players_df, us_df)
 
-# Prefer Understat xGI90 when available
 players_df["xgi_p90_final"] = np.where(
     players_df["us_xGI90"].notna(),
     UNDERSTAT_BLEND * players_df["us_xGI90"] + (1 - UNDERSTAT_BLEND) * players_df["xgi_p90"],
@@ -626,56 +637,116 @@ elif menu == "🛡️ My Squad & Pitch View":
     official = [p["element"] for p in picks_data.get("picks", [])] if picks_data else []
 
     if use_manual or not official:
-        st.info("Manual mode – pick 15 players")
-        gkp = players_df[players_df["position"] == "GKP"].sort_values("now_cost")
-        deff = players_df[players_df["position"] == "DEF"].sort_values("now_cost")
-        mid = players_df[players_df["position"] == "MID"].sort_values("now_cost")
-        fwd = players_df[players_df["position"] == "FWD"].sort_values("now_cost")
+        st.info("**Manual mode** – Build a valid 15-man squad (2 GKP · 5 DEF · 5 MID · 3 FWD)")
 
-        defs_ids = (
-            st.session_state.custom_squad_ids
-            if st.session_state.custom_squad_ids and len(st.session_state.custom_squad_ids) == 15
-            else (
-                gkp.head(2)["id"].tolist()
-                + deff.head(5)["id"].tolist()
-                + mid.head(5)["id"].tolist()
-                + fwd.head(3)["id"].tolist()
-            )
-        )
+        current_ids = st.session_state.custom_squad_ids or []
+        current_squad = players_df[players_df["id"].isin(current_ids)] if current_ids else pd.DataFrame()
 
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            sg = st.multiselect(
-                "GKP", gkp["id"],
-                [i for i in defs_ids if i in gkp["id"].values][:2],
-                format_func=lambda x: gkp.loc[gkp["id"] == x, "display_label"].values[0],
-                max_selections=2
+        counts = {"GKP": 0, "DEF": 0, "MID": 0, "FWD": 0}
+        if not current_squad.empty:
+            vc = current_squad["position"].value_counts().to_dict()
+            counts = {k: vc.get(k, 0) for k in ["GKP", "DEF", "MID", "FWD"]}
+
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("🧤 GKP", f"{counts['GKP']}/2")
+        c2.metric("🛡️ DEF", f"{counts['DEF']}/5")
+        c3.metric("⚙️ MID", f"{counts['MID']}/5")
+        c4.metric("🎯 FWD", f"{counts['FWD']}/3")
+        total_cost = current_squad["now_cost"].sum() if not current_squad.empty else 0.0
+        c5.metric("💰 Value", f"£{total_cost:.1f}m")
+
+        st.markdown("---")
+
+        search = st.text_input("🔍 Search player", placeholder="Type name…", key="squad_search")
+        pos_filter = st.multiselect("Position filter", ["GKP", "DEF", "MID", "FWD"], default=["GKP", "DEF", "MID", "FWD"])
+
+        available = players_df[
+            (~players_df["id"].isin(current_ids)) &
+            (players_df["position"].isin(pos_filter))
+        ].copy()
+
+        if search:
+            available = available[available["web_name"].str.contains(search, case=False, na=False)]
+
+        available = available.sort_values(["position", "now_cost"])
+
+        max_allowed = {"GKP": 2, "DEF": 5, "MID": 5, "FWD": 3}
+
+        if not available.empty:
+            available["label"] = (
+                available["web_name"] + " (" + available["team_short"] + ") – £" +
+                available["now_cost"].astype(str) + "m  |  " + available["status_badge"]
             )
-        with c2:
-            sd = st.multiselect(
-                "DEF", deff["id"],
-                [i for i in defs_ids if i in deff["id"].values][:5],
-                format_func=lambda x: deff.loc[deff["id"] == x, "display_label"].values[0],
-                max_selections=5
+
+            for pos, emoji in [("GKP", "🧤"), ("DEF", "🛡️"), ("MID", "⚙️"), ("FWD", "🎯")]:
+                pos_df = available[available["position"] == pos]
+                remaining = max_allowed[pos] - counts[pos]
+                if pos_df.empty or remaining <= 0:
+                    continue
+
+                with st.expander(f"{emoji} {pos} — {remaining} slot(s) left", expanded=(remaining > 0 and counts[pos] < max_allowed[pos])):
+                    selected = st.multiselect(
+                        f"Add {pos}",
+                        options=pos_df["id"].tolist(),
+                        format_func=lambda x: pos_df.loc[pos_df["id"] == x, "label"].values[0],
+                        key=f"add_{pos}",
+                        max_selections=remaining
+                    )
+                    if selected:
+                        new_ids = list(dict.fromkeys(current_ids + selected))  # preserve order, unique
+                        st.session_state.custom_squad_ids = new_ids
+                        st.rerun()
+        else:
+            st.info("No more players match the current filter.")
+
+        if current_ids:
+            st.markdown("### Current Squad")
+            st.dataframe(
+                current_squad[["web_name", "position", "team_short", "now_cost", "status_badge", "xP"]]
+                .sort_values(["position", "now_cost"]),
+                use_container_width=True, hide_index=True
             )
-        with c3:
-            sm = st.multiselect(
-                "MID", mid["id"],
-                [i for i in defs_ids if i in mid["id"].values][:5],
-                format_func=lambda x: mid.loc[mid["id"] == x, "display_label"].values[0],
-                max_selections=5
-            )
-        with c4:
-            sf = st.multiselect(
-                "FWD", fwd["id"],
-                [i for i in defs_ids if i in fwd["id"].values][:3],
-                format_func=lambda x: fwd.loc[fwd["id"] == x, "display_label"].values[0],
-                max_selections=3
-            )
-        ids = sg + sd + sm + sf
-        if len(ids) == 15:
-            st.session_state.custom_squad_ids = ids
-        full = players_df[players_df["id"].isin(ids)]
+
+            col_a, col_b = st.columns(2)
+            with col_a:
+                remove_id = st.selectbox(
+                    "Remove a player",
+                    current_ids,
+                    format_func=lambda x: players_df.loc[players_df["id"] == x, "display_label"].values[0]
+                )
+                if st.button("Remove selected"):
+                    st.session_state.custom_squad_ids = [i for i in current_ids if i != remove_id]
+                    st.rerun()
+            with col_b:
+                if st.button("🗑️ Clear entire squad", type="secondary"):
+                    st.session_state.custom_squad_ids = []
+                    st.rerun()
+
+        st.markdown("### Quick actions")
+        qa1, qa2, qa3 = st.columns(3)
+        with qa1:
+            if st.button("Auto-fill cheapest valid 15"):
+                g = players_df[players_df["position"] == "GKP"].nsmallest(2, "now_cost")["id"].tolist()
+                d = players_df[players_df["position"] == "DEF"].nsmallest(5, "now_cost")["id"].tolist()
+                m = players_df[players_df["position"] == "MID"].nsmallest(5, "now_cost")["id"].tolist()
+                f = players_df[players_df["position"] == "FWD"].nsmallest(3, "now_cost")["id"].tolist()
+                st.session_state.custom_squad_ids = g + d + m + f
+                st.rerun()
+        with qa2:
+            if st.button("Auto-fill highest xP"):
+                g = players_df[players_df["position"] == "GKP"].nlargest(2, "xP")["id"].tolist()
+                d = players_df[players_df["position"] == "DEF"].nlargest(5, "xP")["id"].tolist()
+                m = players_df[players_df["position"] == "MID"].nlargest(5, "xP")["id"].tolist()
+                f = players_df[players_df["position"] == "FWD"].nlargest(3, "xP")["id"].tolist()
+                st.session_state.custom_squad_ids = g + d + m + f
+                st.rerun()
+        with qa3:
+            if official and st.button("Load official squad"):
+                st.session_state.custom_squad_ids = official
+                st.session_state.use_official_squad = True
+                st.rerun()
+
+        full = players_df[players_df["id"].isin(st.session_state.custom_squad_ids or [])]
     else:
         ids = st.session_state.custom_squad_ids or official
         full = players_df[players_df["id"].isin(ids)]
@@ -722,9 +793,6 @@ elif menu == "🛡️ My Squad & Pitch View":
 
         st.plotly_chart(generate_pitch(xi, bench, capt, gw=selected_gw_num), use_container_width=True)
 
-# =============================================================================
-# NEW: CAPTAIN WHAT-IF
-# =============================================================================
 elif menu == "👑 Captain What-If":
     st.title("👑 Captain What-If Calculator")
 
@@ -738,7 +806,6 @@ elif menu == "👑 Captain What-If":
     squad = players_df[players_df["id"].isin(ids)].copy()
     xi, _ = select_xi(squad, "xP")
 
-    # Detect current captain
     current_capt_id = None
     if picks_data:
         for p in picks_data.get("picks", []):
@@ -797,18 +864,20 @@ elif menu == "👑 Captain What-If":
         )
 
 elif menu == "🎯 Set-Piece Takers":
-    st.title("🎯 Set-Piece Takers (Top 3 + % chance)")
-    st.caption("2026/27 early predictions. % = estimated share of that set-piece.")
+    st.title("🎯 Set-Piece Takers (2026/27)")
+    st.caption("Source: FPL Assistant + official FPL expected list (updated Aug 2026). % = estimated role strength.")
+
     roles = st.multiselect("Roles", ["Penalties", "Free Kicks", "Corners"], default=["Penalties", "Free Kicks", "Corners"])
     rows = []
     for team, data in SET_PIECE_DATA.items():
         for role, takers in data.items():
             if role not in roles:
                 continue
-            for name, pct in takers[:3]:
+            for name, pct in takers:
                 p = find_player(name, team)
                 rows.append({
-                    "Team": team, "Role": role,
+                    "Team": team,
+                    "Role": role,
                     "Player": p["web_name"] if p is not None else name,
                     "Pos": p["position"] if p is not None else "–",
                     "% Chance": f"{pct}%",
